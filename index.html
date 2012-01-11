@@ -1,0 +1,342 @@
+<!doctype html>
+<html>
+
+<head>
+<title>Foo</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
+
+<script id="shader-fs" type="x-shader/x-fragment">
+    precision mediump float;
+    
+    varying vec4 vColor;
+    varying vec2 vTextureCoord;
+    
+    uniform sampler2D uVectorField;
+    uniform float uDt;
+    
+    
+    vec4 bilerp(sampler2D tex, vec2 s) {
+          vec4 st;
+          
+          st.xy = (floor(s * 256.0 - 0.5) + 0.5)/256.0;
+          st.zw = st.xy + 1.0/256.0;
+          
+          
+          vec2 t = (s - st.xy)*256.0;
+          
+          vec4 tex11 = texture2D(tex, st.xy);
+          vec4 tex21 = texture2D(tex, st.zy);
+          vec4 tex12 = texture2D(tex, st.xw);
+          vec4 tex22 = texture2D(tex, st.zw);
+          
+          // bilinear interpolation
+          return mix(mix(tex11, tex21, t.x), mix(tex12, tex22, t.x), t.y);
+    }
+    
+    void main(void) {
+        float delta = uDt / 256.0;
+        vec2 coord = vec2(vTextureCoord.s, vTextureCoord.t);
+        vec4 data = texture2D(uVectorField, vTextureCoord);
+        vec2 lastPosition = vTextureCoord - data.xy;
+        lastPosition = vTextureCoord - delta*256.0;
+        
+        gl_FragColor = bilerp(uVectorField, lastPosition);
+    }
+</script>
+<script id="pinkify-fs" type="x-shader/x-fragment">
+    precision mediump float;
+    
+    varying vec4 vColor;
+    varying vec2 vTextureCoord;
+    
+    //uniform sampler2D uVectorField;
+    
+    void main(void) {
+        gl_FragColor = vec4(1,0,1,1);
+    }
+</script>
+
+<script id="shader-vs" type="x-shader/x-vertex">
+    attribute vec3 aVertexPosition;
+    attribute vec2 aTextureCoord;
+    
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+
+    varying vec2 vTextureCoord;
+
+    void main(void) {
+        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+        vTextureCoord = aTextureCoord;
+    }
+</script>
+
+
+<script>
+var SolveStep = function(context, renderer, sourceCode) {
+    this._context = context;
+    this._renderer = renderer;
+    this._source = sourceCode;
+};
+SolveStep.prototype = {
+    loadAssets: function() {
+        this._fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(this._fragmentShader, this._source);
+        gl.compileShader(this._fragmentShader);
+        
+        if (!gl.getShaderParameter(this._fragmentShader, gl.COMPILE_STATUS))
+            throw "FAILED TO COMPILE SHADER: \n" + gl.getShaderInfoLog(this._fragmentShader) + this._source;
+            
+        this._program = this._context.createSolveProgram(this._fragmentShader);
+        console.log("Loaded " + this._source);
+    },
+    
+    go: function(dt, dataTexture, destinationTexture) {
+        this._renderer.begin(destinationTexture);
+        gl.clear(gl.DEPTH_BUFFER_BIT);
+        
+        this.draw(dt, dataTexture);
+        
+        this._renderer.end();
+    },
+    
+    draw: function(dt, texture) {
+        gl.useProgram(this._program);
+        this._bindBuffer(this._program.arguments.vertices, UsedEverywhere.Vertices);
+        this._bindBuffer(this._program.arguments.textureCoords, UsedEverywhere.TextureCoords);
+    
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.uniform1i(this._program.uniform.vectorFieldTexture, 0);
+        gl.uniform1f(this._program.uniform.dt, dt);
+        
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, UsedEverywhere.Vertices.numItems);
+    },
+    
+    _bindBuffer: function(argument, buffer) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.vertexAttribPointer(argument, buffer.itemSize, gl.FLOAT, false, 0, 0);
+    
+    },
+};
+
+var Renderer = function(framebuffer, renderbuffer) {
+    this._framebuffer = framebuffer;
+    this._renderbuffer = renderbuffer;
+};
+Renderer.prototype = {
+    begin: function(texture) {
+        this._currentTexture = texture;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this._framebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+    },
+    
+    end: function() {
+        gl.bindTexture(gl.TEXTURE_2D, this._currentTexture);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+};
+
+var SolveContext = function(vertexShader) {
+    this._vertexShader = vertexShader;
+};
+SolveContext.prototype = {
+    createSolveProgram: function(fragmentShader) {
+        var program = gl.createProgram();
+        gl.attachShader(program, this._vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) 
+            throw "Failed initialization of shader";
+                
+        gl.useProgram(program);
+        program.arguments = {
+            vertices: gl.getAttribLocation(program, "aVertexPosition"),
+            textureCoords: gl.getAttribLocation(program, "aTextureCoord")
+        };
+        gl.enableVertexAttribArray(program.arguments.vertices);
+        gl.enableVertexAttribArray(program.arguments.textureCoords);
+        
+        program.uniform = {
+            projectionMatrix: gl.getUniformLocation(program, 'uPMatrix'),
+            modelViewMatrix: gl.getUniformLocation(program, 'uMVMatrix'),
+            vectorFieldTexture: gl.getUniformLocation(program, 'uVectorField'),
+            dt: gl.getUniformLocation(program, 'uDt'),
+        };
+    
+        // Uniforms are unchanging!    
+        gl.uniformMatrix4fv(program.uniform.projectionMatrix, false, UsedEverywhere.ProjectionMatrix);
+        gl.uniformMatrix4fv(program.uniform.modelViewMatrix, false, UsedEverywhere.ModelViewMatrix);
+    
+        return program
+    }
+};
+
+var UsedEverywhere = {
+    setup: function() {
+        var createBuffer = function(data, itemSize, numItems) {
+            var buffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+            buffer.itemSize = itemSize;
+            buffer.numItems = numItems;
+            return buffer;
+        };
+        
+        UsedEverywhere.Vertices = createBuffer([1,1,0,  0,1,0,  1,0,0,  0,0,0], 3, 4);
+        UsedEverywhere.TextureCoords = createBuffer([1,1, 0,1, 1,0, 0,0], 2, 4);
+        
+        UsedEverywhere.ProjectionMatrix = mat4.create();
+        mat4.ortho(0,1,0,1,0,1, UsedEverywhere.ProjectionMatrix);
+        
+        UsedEverywhere.ModelViewMatrix = mat4.create();
+        mat4.identity(UsedEverywhere.ModelViewMatrix);
+    }
+};
+
+var gl,
+    shaderProgram,
+    squareVertexPositionBuffer, squareColorBuffer, squareTextureCoordBuffer,
+    pMatrix = mat4.create(),
+    mvMatrix = mat4.create(),
+    texture,
+    rttFramebuffer,
+    rttTexture
+    ;
+    
+function webGlStart() {
+    var canvas = document.getElementById('dest');
+    initGl(canvas);
+    UsedEverywhere.setup();
+
+    var passThroughSource = document.getElementById('shader-fs').innerText;
+    var pinkifySource = document.getElementById('pinkify-fs').innerText;
+      
+    var vertexShader = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vertexShader, document.getElementById('shader-vs').innerText);
+    gl.compileShader(vertexShader);
+
+    var framebuffer = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+    framebuffer.width = 256;
+    framebuffer.height = 256;
+    
+    var renderbuffer = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 256, 256);
+    
+    // TFSBAD This required because of per-step? Maybe here instead?
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
+
+    var renderTargetTexture = createRenderTargetTexture(256, null);
+    var renderTargetTexture2 = createRenderTargetTexture(256, null);
+    var dataTexture = createTextureFromImage('cheese.jpg');
+        
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      
+    var context = new SolveContext(vertexShader);
+    var renderer = new Renderer(framebuffer, renderbuffer);
+    
+    var solveStep = new SolveStep(context, renderer, passThroughSource);
+    solveStep.loadAssets();
+    
+    var pinkifySolveStep = new SolveStep(context, renderer, pinkifySource);
+    pinkifySolveStep.loadAssets();
+    
+    gl.clearColor(0,0,0,1);
+    gl.enable(gl.DEPTH_TEST);
+    
+    gl.viewport(0,0,gl.viewportWidth, gl.viewportHeight);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    
+    setTimeout(function() {    
+        solveStep.go(0, dataTexture, renderTargetTexture);
+        solveStep.draw(0, renderTargetTexture);
+        
+        var frameNumber = 0;
+        var time = Date.now();
+        var frameStart = time;
+        setInterval(function() {
+            var newTime = Date.now();
+            var dt = (newTime - time)/1000.0;
+            time = newTime;
+            
+            dt = dt * document.getElementById('speedup').value;
+            frameNumber++;
+            if (time - frameStart > 500) {
+                document.getElementById('fps').innerHTML = 1000*frameNumber/(time - frameStart) + ' dt=' + dt;
+                frameNumber = 0;
+                frameStart = time;
+            }
+                
+            solveStep.go(dt, renderTargetTexture, renderTargetTexture2);
+            solveStep.draw(dt, renderTargetTexture2);
+            
+            var temp = renderTargetTexture;
+            renderTargetTexture = renderTargetTexture2;
+            renderTargetTexture2 = temp;
+        }, 0);
+    }, 100);
+}
+
+function initGl(canvas) {
+    try {
+        gl = canvas.getContext('experimental-webgl');
+        gl.viewportWidth = canvas.width;
+        gl.viewportHeight = canvas.height;
+    } catch(e) {
+    }
+    
+    if (!gl) alert("Could not create gl context - try and use a real browser");
+}
+
+function createRenderTargetTexture(size, initialData) {
+    var texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, initialData);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return texture;
+
+}
+
+function createTextureFromImage(src) {
+    var texture = gl.createTexture();
+    texture.image = new Image();
+    texture.image.onload = function() {
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture.image);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+    };
+    texture.image.src = src;
+    return texture;
+};
+
+</script>
+<style>
+    canvas { 
+        width: 400px; 
+        height: 400px; 
+    }
+</style>
+</head>
+<body onload="webGlStart()">
+<h1>Lesson 01</h1>
+<canvas id="dest" width=256 height=256>
+</canvas><br />
+FPS: <span id="fps"></span><br />
+Speedup: <input type="number" id="speedup" value="0" />
+</body>
+</html>
