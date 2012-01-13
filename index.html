@@ -9,10 +9,6 @@
 <script type="text/javascript" src="class.js"></script>
 <script type="text/javascript" src="jquery.js"></script>
 
-<script id="jacobi-fs" type="x-shader/x-fragment">
-
-</script>
-
 <script id="inject-fs" type="x-shader/x-fragment">
 
     precision mediump float;
@@ -29,20 +25,22 @@
     
         vec4 retVal = texture2D(uVectorField, vTextureCoord);
         if (length(uPosition - vTextureCoord) < 0.04) {
-            retVal += uVelocity;
+            retVal = uVelocity;
         }
         gl_FragColor = retVal;
     }
 </script>
-<script id="diffuse-fs" type="x-shader/x-fragment">
+
+<script id="jacobi-fs" type="x-shader/x-fragment">
 
     precision mediump float;
     
-    varying vec4 vColor;
     varying vec2 vTextureCoord;
     
-    uniform sampler2D uVectorField;
-    uniform float uDt;
+    uniform sampler2D uX;
+    uniform sampler2D uB;
+    uniform float uAlpha;
+    uniform float uBeta;
     
     void F4Neighbours2D(sampler2D tex,
 						 vec2 s,
@@ -60,17 +58,80 @@
     }
     
     void main(void) {
-        //float alpha = 100.0*uDt; //something
-        float alpha = 0.000001;//1.0/(256.0*256.0) / uDt;
-        float beta = 4.0 + alpha; //something
-    
-        // secretly uVectorField should be 'b'
-    	vec4 a = texture2D(uVectorField, vTextureCoord);
     	vec4 left, right, up, down;
-    	F4Neighbours2D(uVectorField, vTextureCoord, left, right, up, down);
+  
+    	vec4 current = texture2D(uX, vTextureCoord);
+    	F4Neighbours2D(uB, vTextureCoord, left, right, up, down);
     	
-    	gl_FragColor = (left + right + up + down + alpha*a) / beta;
+    	gl_FragColor = (current + uAlpha*(left + right + up + down)) / uBeta;
+    	//gl_FragColor = left;
     }
+</script>
+
+<script id="divergence-fs" type="xshader/x-fragment">
+    precision mediump float;
+    
+    varying vec2 vTextureCoord;
+    uniform sampler2D uVectorField;
+    
+    void F4Neighbours2D(sampler2D tex,
+						 vec2 s,
+						 out vec4 left,
+						 out vec4 right,
+						 out vec4 up,
+						 out vec4 down)
+    {
+    	vec3 p  = vec3(-1, 0, 1)/256.0;
+    	
+    	down = texture2D(tex, s + p.yx);
+    	up = texture2D(tex, s + p.yz);
+    	left = texture2D(tex, s + p.xy);
+    	right = texture2D(tex, s + p.zy);
+    }
+    
+    void main() {
+    	vec4 left, right, up, down;
+    	vec2 d = vec2(1.,1.)/256.;
+    	F4Neighbours2D(uVectorField, vTextureCoord, left, right, up, down);
+    	float result  = ((right.x - left.x) / (2.*d.x)) + ((up.y - down.y) / (2.*d.y));
+    	gl_FragColor = vec4(result,result,result,result); // FIXME: Make 1-D
+    }
+</script>
+
+<script id="subtract-pressure-gradient-fs" type="xshader/x-fragment">
+    precision mediump float;
+    
+
+    varying vec2 vTextureCoord;
+    uniform sampler2D uVectorField;
+    uniform sampler2D uPressure;
+    
+    void F4Neighbours2D(sampler2D tex,
+						 vec2 s,
+						 out vec4 left,
+						 out vec4 right,
+						 out vec4 up,
+						 out vec4 down)
+    {
+    	vec3 p  = vec3(-1, 0, 1)/256.0;
+    	
+    	down = texture2D(tex, s + p.yx);
+    	up = texture2D(tex, s + p.yz);
+    	left = texture2D(tex, s + p.xy);
+    	right = texture2D(tex, s + p.zy);
+    }
+    
+    void main(void) {
+    	vec4 left, right, up, down;
+    	vec2 d = vec2(1.,1.)/256.;
+    	
+      	F4Neighbours2D(uPressure, vTextureCoord, left, right, up, down);
+    
+    	vec4 result = texture2D(uVectorField, vTextureCoord);
+    	result.x -=  ((right - left)/(2.*d.x));
+    	result.y -=  ((up - down)/(2.*d.y));
+    	gl_FragColor = result; // FIXME: Make 1-D
+	}
 </script>
 
 <script id="advect-fs" type="x-shader/x-fragment">
@@ -108,6 +169,7 @@
         gl_FragColor = bilerp(uVectorField, lastPosition);
     }
 </script>
+
 <script id="draw-fs" type="x-shader/x-fragment">
     precision mediump float;
     
@@ -207,10 +269,10 @@ var SolveProgram = Class.extend({
         this._program = program;
     },
     
-    go: function(bindings, dataTexture) {
+    go: function(bindings, destination) {
         this._renderer.begin();
         this._program.go(bindings);
-        this._renderer.end();
+        this._renderer.end(destination);
     }
 });
 
@@ -232,13 +294,13 @@ var Renderer = Class.extend({
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this._textureManager.buffer(), 0);
     },
     
-    end: function() {
+    end: function(destination) {
         //gl.bindTexture(gl.TEXTURE_2D, this._textureManager.buffer());
         //gl.generateMipmap(gl.TEXTURE_2D);
         //gl.bindTexture(gl.TEXTURE_2D, null);
         
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        this._textureManager.swap();
+        this._textureManager.swap(destination);
     }
 });
 
@@ -263,13 +325,19 @@ var SolveContext = Class.extend({
         gl.enableVertexAttribArray(program.arguments.vertices);
         gl.enableVertexAttribArray(program.arguments.textureCoords);
         
+        // LOLOLOLOLOLOL
         program.uniform = {
             projectionMatrix: gl.getUniformLocation(program, 'uPMatrix'),
             modelViewMatrix: gl.getUniformLocation(program, 'uMVMatrix'),
             vectorField: gl.getUniformLocation(program, 'uVectorField'),
+            pressure: gl.getUniformLocation(program, 'uPressure'),
             dt: gl.getUniformLocation(program, 'uDt'),
             position: gl.getUniformLocation(program, 'uPosition'),
             velocity: gl.getUniformLocation(program, 'uVelocity'),
+            x: gl.getUniformLocation(program, 'uX'),
+            b: gl.getUniformLocation(program, 'uB'),
+            alpha: gl.getUniformLocation(program, 'uAlpha'),
+            beta: gl.getUniformLocation(program, 'uBeta')
         };
     
         // Uniforms are unchanging!    
@@ -281,25 +349,39 @@ var SolveContext = Class.extend({
 });
 
 var TextureManager = Class.extend({
-    construct: function(currentTexture, bufferTexture) {
-        this._currentTexture = currentTexture;
-        this._bufferTexture = bufferTexture;
+    construct: function(vectorField, spare, buffer, divergenceField, pressure) {
+        this._vectorField = vectorField;
+        this._spare = spare;
+        this._buffer = buffer;
+        this._divergenceField = divergenceField;
+        this._pressure = pressure;
+    },
+   
+    vectorField: function(value) {
+        return this._vectorField = (value === $.undefined ? this._vectorField : value);
     },
     
-    current: function() {
-        return this._currentTexture;
+    spare: function(value) {
+        return this._spare = (value === $.undefined ? this._spare : value);
     },
     
-    buffer: function() {
-        return this._bufferTexture;
+    buffer: function(value) {
+        return this._buffer = (value === $.undefined ? this._buffer : value);
     },
     
-    swap: function() {
-        var temp = this._currentTexture;
-        this._currentTexture = this._bufferTexture;
-        this._bufferTexture = temp;
-    }
+    divergenceField: function(value) {
+        return this._divergenceField = (value === $.undefined ? this._divergenceField : value);
+    },
     
+    pressure: function(value) {
+        return this._pressure = (value === $.undefined ? this._pressure : value);
+    },
+    
+    swap: function(fn) {
+        var tmp = this.buffer();
+        this.buffer(fn.call(this));
+        fn.call(this, tmp);
+    }    
 });
 
 var UsedEverywhere = {
@@ -355,15 +437,17 @@ function webGlStart() {
     // TFSBAD This required because of per-step? Maybe here instead?
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
 
-    var renderTargetTexture = createRenderTargetTexture(256, null);
-    var renderTargetTexture2 = createRenderTargetTexture(256, null);
-    var dataTexture = createTextureFromImage('cheese.jpg');
+    var vectorField = createRenderTargetTexture(256, null);
+    var spare = createRenderTargetTexture(256, null);
+    var buffer = createRenderTargetTexture(256, null);
+    var divergenceField = createRenderTargetTexture(256, null);
+    var pressure = createRenderTargetTexture(256, null);
     
     gl.bindTexture(gl.TEXTURE_2D, null);
     gl.bindRenderbuffer(gl.RENDERBUFFER, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     
-    var textureManager = new TextureManager(renderTargetTexture, renderTargetTexture2);
+    var textureManager = new TextureManager(vectorField, spare, buffer, divergenceField, pressure);
       
     var context = new SolveContext(vertexShader);
     var renderer = new Renderer(framebuffer, renderbuffer, textureManager);
@@ -375,6 +459,18 @@ function webGlStart() {
     var injectProgram = new Program(context, document.getElementById('inject-fs').innerText);
     injectProgram.loadAssets();
     var injectSolver = new SolveProgram(renderer, injectProgram);
+    
+    var jacobiProgram = new Program(context, document.getElementById('jacobi-fs').innerText);
+    jacobiProgram.loadAssets();
+    var jacobiSolver = new SolveProgram(renderer, jacobiProgram);
+    
+    var divergenceProgram = new Program(context, document.getElementById('divergence-fs').innerText);
+    divergenceProgram.loadAssets();
+    var divergenceSolver = new SolveProgram(renderer, divergenceProgram);
+    
+    var subtractPressureGradientProgram = new Program(context, document.getElementById('subtract-pressure-gradient-fs').innerText);
+    subtractPressureGradientProgram.loadAssets();
+    var subtractPressureGradientSolver = new SolveProgram(renderer, subtractPressureGradientProgram);
     
     var drawProgram = new Program(context, document.getElementById('draw-fs').innerText);
     drawProgram.loadAssets();
@@ -392,7 +488,25 @@ function webGlStart() {
         };
     };
     var currentTextureParam = function() { 
-        return textureParam('vectorField', textureManager.current());
+        return textureParam('vectorField', textureManager.vectorField());
+    };
+    
+    var debugTexture = function(textureName) {
+        if (!$('#debug').is(":checked")) return;
+        drawProgram.go([textureParam(textureName, textureManager[textureName]())]);
+        $('#' + textureName).attr('src', $('canvas')[0].toDataURL());
+        
+    }
+    
+    var solveLinearSystem = function(x0, b, destination, alpha, beta) {
+        for (var i=0; i < 20; i++) {
+            jacobiSolver.go([
+                { name: 'x', type: 'texture', value: x0.call(textureManager) },
+                { name: 'b', type: 'texture', value: b.call(textureManager) },
+                { name: 'alpha', type: 'uniform1f', value: alpha }, 
+                { name: 'beta', type: 'uniform1f', value: beta } 
+            ], destination);
+        }
     };
     
     var injectParam = null;
@@ -438,10 +552,12 @@ function webGlStart() {
         var maxSecondsBetweenFrames = 0.01;
         var maxSolvesPerSecond = 1000;
         setInterval(function() {
+            if (!$('#go').is(':checked')) return;
             var timeThisFrame = 0;
             var solvesThisFrame = 0;
             
-            if (injectParam) injectSolver.go(injectParam);
+            if (injectParam)
+                injectSolver.go(injectParam, textureManager.vectorField);
             
             while(timeThisFrame < maxSecondsBetweenFrames && solvesThisFrame < maxSolvesPerSecond*maxSecondsBetweenFrames) {
                 var newTime = Date.now();
@@ -465,8 +581,26 @@ function webGlStart() {
                     value: dt  
                 };
                 
-                advectSolver.go([dtBinding, currentTextureParam()]);
+                advectSolver.go([dtBinding, currentTextureParam()], textureManager.vectorField);
+                
+                //float a=dt*diff*N*N;
+                var alpha = dt * 256 * 256;
+                var beta = 1 + 4 * alpha;
+                solveLinearSystem(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, alpha, beta); // Diffuse
+                                
+                //divergenceSolver.go([dtBinding, currentTextureParam()], textureManager.divergenceField);
+                //solveLinearSystem(textureManager.pressure, textureManager.divergenceField, textureManager.pressure, -1.0/256/256, 4); // Pressure
+                /*
+                subtractPressureGradientSolver.go([dtBinding, currentTextureParam(), {
+                    name: 'pressure',
+                    type: 'texture',
+                    value: textureManager.pressure()
+                }], textureManager.vectorField);
+                */
             }
+            debugTexture('vectorField');
+            debugTexture('pressure');
+            debugTexture('divergenceField');
             drawProgram.go([currentTextureParam()]);
             
         }, 0);
@@ -520,12 +654,15 @@ function createTextureFromImage(src) {
 </script>
 <style>
     canvas { 
-        border: 1px solid red;
-        awidth: 400px; 
-        aheight: 400px; 
+        border: 1px solid white;
+        width: 256px; 
+        height: 256px; 
     }
     body {
         background: #888;
+    }
+    img.texture {
+        width: 128px; height: 128px;
     }
 </style>
 </head>
@@ -533,7 +670,15 @@ function createTextureFromImage(src) {
 <h1>Lesson 01</h1>
 <canvas id="dest" width=256 height=256>
 </canvas><br />
+<img class="texture" id="vectorField" title="Vector Field" />
+<img class="texture" id="pressure" title="Pressure" />
+<img class="texture" id="divergenceField" title="Divergence" />
+
+<br />
 FPS: <span id="fps"></span><br />
-Speedup: <input type="number" id="speedup" value="0" />
+Speedup: <input type="number" id="speedup" value="1" />
+<label><input type="checkbox" checked="checked" id="go" /> Go</label>
+<label><input type="checkbox" id="debug" /> Debug</label>
+
 </body>
 </html>
