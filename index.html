@@ -19,12 +19,29 @@
     uniform sampler2D uVectorField;
     
     void main(void) {
-        gl_FragColor = texture2D(uVectorField, vTextureCoord);
         if (length(uPosition - vTextureCoord) < 0.04) {
             gl_FragColor = uVelocity;
         } else {
+            gl_FragColor = texture2D(uVectorField, vTextureCoord);
         }
     }
+</script>
+
+<script id="neighbours-util" type="x-shader/x-fragment">
+void F4Neighbours2D(sampler2D tex,
+					 vec2 s,
+					 out vec4 left,
+					 out vec4 right,
+					 out vec4 up,
+					 out vec4 down)
+{
+	vec3 p  = vec3(-1, 0, 1)/256.0;
+	
+	down = texture2D(tex, s + p.yx);
+	up = texture2D(tex, s + p.yz);
+	left = texture2D(tex, s + p.xy);
+	right = texture2D(tex, s + p.zy);
+}
 </script>
 
 <script id="jacobi-fs" type="x-shader/x-fragment">
@@ -36,21 +53,6 @@
     uniform sampler2D uB;
     uniform float uAlpha;
     uniform float uBeta;
-    
-    void F4Neighbours2D(sampler2D tex,
-						 vec2 s,
-						 out vec4 left,
-						 out vec4 right,
-						 out vec4 up,
-						 out vec4 down)
-    {
-    	vec3 p  = vec3(-1, 0, 1)/256.0;
-    	
-    	down = texture2D(tex, s + p.yx);
-    	up = texture2D(tex, s + p.yz);
-    	left = texture2D(tex, s + p.xy);
-    	right = texture2D(tex, s + p.zy);
-    }
     
     void main(void) {
     	vec4 left, right, up, down;
@@ -69,21 +71,6 @@
     varying vec2 vTextureCoord;
     uniform sampler2D uVectorField;
     
-    void F4Neighbours2D(sampler2D tex,
-						 vec2 s,
-						 out vec4 left,
-						 out vec4 right,
-						 out vec4 up,
-						 out vec4 down)
-    {
-    	vec3 p  = vec3(-1, 0, 1)/256.0;
-    	
-    	down = texture2D(tex, s + p.yx);
-    	up = texture2D(tex, s + p.yz);
-    	left = texture2D(tex, s + p.xy);
-    	right = texture2D(tex, s + p.zy);
-    }
-    
     void main() {
     	vec4 left, right, up, down;
     	F4Neighbours2D(uVectorField, vTextureCoord, left, right, up, down);
@@ -99,21 +86,6 @@
     uniform sampler2D uVectorField;
     uniform sampler2D uPressure;
     
-    void F4Neighbours2D(sampler2D tex,
-						 vec2 s,
-						 out vec4 left,
-						 out vec4 right,
-						 out vec4 up,
-						 out vec4 down)
-    {
-    	vec3 p  = vec3(-1, 0, 1)/256.0;
-    	
-    	down = texture2D(tex, s + p.yx);
-    	up = texture2D(tex, s + p.yz);
-    	left = texture2D(tex, s + p.xy);
-    	right = texture2D(tex, s + p.zy);
-    }
-    
     void main(void) {
     	vec4 left, right, up, down;    	
       	F4Neighbours2D(uPressure, vTextureCoord, left, right, up, down);
@@ -125,6 +97,26 @@
 	}
 </script>
 
+<script id="bilerp-util" type="x-shader/x-fragment">
+vec4 bilerp(sampler2D tex, vec2 s) {
+      vec4 st;
+      
+      s = s * 256.0;
+      st.xy = (floor(s - 0.5) + 0.5);
+      st.zw = st.xy + 1.0;
+      vec2 t = s - st.xy;
+      st = st / 256.0;
+                
+      vec4 tex11 = texture2D(tex, st.xy);
+      vec4 tex21 = texture2D(tex, st.zy);
+      vec4 tex12 = texture2D(tex, st.xw);
+      vec4 tex22 = texture2D(tex, st.zw);
+      
+      // bilinear interpolation
+      return mix(mix(tex11, tex21, t.x), mix(tex12, tex22, t.x), t.y);
+}
+</script>
+
 <script id="advect-fs" type="x-shader/x-fragment">
     precision mediump float;
     
@@ -133,24 +125,6 @@
     uniform sampler2D uAffectedField;
     uniform sampler2D uVectorField;
     uniform float uDt;
-    
-    vec4 bilerp(sampler2D tex, vec2 s) {
-          vec4 st;
-          
-          s = s * 256.0;
-          st.xy = (floor(s - 0.5) + 0.5);
-          st.zw = st.xy + 1.0;
-          vec2 t = s - st.xy;
-          st = st / 256.0;
-                    
-          vec4 tex11 = texture2D(tex, st.xy);
-          vec4 tex21 = texture2D(tex, st.zy);
-          vec4 tex12 = texture2D(tex, st.xw);
-          vec4 tex22 = texture2D(tex, st.zw);
-          
-          // bilinear interpolation
-          return mix(mix(tex11, tex21, t.x), mix(tex12, tex22, t.x), t.y);
-    }
     
     void main(void) {
         float speed = 30.0;
@@ -300,6 +274,18 @@ var SolveProgram = Class.extend({
     }
 });
 
+var Solver = Class.extend({
+    construct: function(renderer) {
+        this._renderer = renderer;
+    },
+    
+    go: function(program, bindings, destination) {
+        this._renderer.begin();
+        program.go(bindings);
+        this._renderer.end(destination);
+    }
+});
+
 var InjectProgram = Program.extend({
     construct: function(context, sourceCode) {
         this._super(context, sourceCode);
@@ -332,8 +318,10 @@ var SolveContext = Class.extend({
     construct: function(vertexShader) {
         this._vertexShader = vertexShader;
     },
+    
     createProgram: function(fragmentShader) {
         var program = gl.createProgram();
+        // TODO: Put utils shaders in here, instead of dodgy string concat
         gl.attachShader(program, this._vertexShader);
         gl.attachShader(program, fragmentShader);
         gl.linkProgram(program);
@@ -373,10 +361,28 @@ var SolveContext = Class.extend({
     }
 });
 
+var TextureLoader = Class.extend({
+    create: function(size) {
+        if (!gl.getExtension('OES_texture_float')) {
+            var text = 'This demo requires the OES_texture_float extension';
+            throw text;
+          }
+      
+        var texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST); // Linear?
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.FLOAT, null);
+        gl.bindTexture(gl.TEXTURE_2D, null);
+        return texture;
+    }
+});
+
 var TextureManager = Class.extend({
-    construct: function(vectorField, spare, buffer, divergenceField, pressure, ink) {
+    construct: function(vectorField, buffer, divergenceField, pressure, ink) {
         this._vectorField = vectorField;
-        this._spare = spare;
         this._buffer = buffer;
         this._divergenceField = divergenceField;
         this._pressure = pressure;
@@ -386,11 +392,7 @@ var TextureManager = Class.extend({
     vectorField: function(value) {
         return this._vectorField = (value === $.undefined ? this._vectorField : value);
     },
-    
-    spare: function(value) {
-        return this._spare = (value === $.undefined ? this._spare : value);
-    },
-    
+        
     buffer: function(value) {
         return this._buffer = (value === $.undefined ? this._buffer : value);
     },
@@ -412,6 +414,26 @@ var TextureManager = Class.extend({
         this.buffer(fn.call(this));
         fn.call(this, tmp);
     }    
+});
+
+var ProgramLoader = Class.extend({
+    construct: function(context) {
+        this._context = context;
+    },
+
+    load: function(fragmentName, utilScripts) {
+        if (!utilScripts) utilScripts = [];
+        var programSource = 'precision mediump float;';
+        for (var i=0; i < utilScripts.length; i++) {
+            programSource += document.getElementById(utilScripts[i] + '-util').innerText;
+        }
+        programSource += document.getElementById(fragmentName + '-fs').innerText;
+        
+        var perturbProgram = new Program(this._context, programSource);
+        perturbProgram.loadAssets();
+        
+        return perturbProgram;
+    }
 });
 
 var UsedEverywhere = {
@@ -463,60 +485,37 @@ function webGlStart() {
     var renderbuffer = gl.createRenderbuffer();
     gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
     gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 256, 256);
-    
-    // TFSBAD This required because of per-step? Maybe here instead?
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
-
-    var vectorField = createRenderTargetTexture(256, null);
-    var spare = createRenderTargetTexture(256, null);
-    var buffer = createRenderTargetTexture(256, null);
-    var divergenceField = createRenderTargetTexture(256, null);
-    var pressure = createRenderTargetTexture(256, null);
-    var ink = createRenderTargetTexture(256, null);
-    
-    gl.bindTexture(gl.TEXTURE_2D, null);
     gl.bindRenderbuffer(gl.RENDERBUFFER, null);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    
-    var textureManager = new TextureManager(vectorField, spare, buffer, divergenceField, pressure, ink);
       
+    var textureLoader = new TextureLoader();
+    var vectorField = textureLoader.create(256);
+    var buffer = textureLoader.create(256);
+    var divergenceField = textureLoader.create(256);
+    var pressure = textureLoader.create(256);
+    var ink = textureLoader.create(256);
+    
+    var textureManager = new TextureManager(vectorField, buffer, divergenceField, pressure, ink);
     var context = new SolveContext(vertexShader);
+    
     var renderer = new Renderer(framebuffer, renderbuffer, textureManager);
+    var programLoader = new ProgramLoader(context);
+    var textureLoader = new TextureLoader(context);
+    var solver = new Solver(renderer);
     
-    var perturbProgram = new Program(context, document.getElementById('perturb-fs').innerText);
-    perturbProgram.loadAssets();
-    var perturbSolver = new SolveProgram(renderer, perturbProgram);
+    var perturbProgram = programLoader.load('perturb', [], { vectorField: { type: 'texture', shaderVariable: 'uVectorField' }});    
+    var advectProgram = programLoader.load('advect', ['bilerp']);    
+    var injectProgram = programLoader.load('inject');    
+    var jacobiProgram = programLoader.load('jacobi', ['neighbours'])    
+    var divergenceProgram = programLoader.load('divergence', ['neighbours']);    
+    var subtractPressureGradientProgram = programLoader.load('subtract-pressure-gradient', ['neighbours']);    
+    var drawProgram = programLoader.load('draw');
     
-    var advectProgram = new Program(context, document.getElementById('advect-fs').innerText);
-    advectProgram.loadAssets();
-    var advectSolver = new SolveProgram(renderer, advectProgram);
-    
-    var injectProgram = new Program(context, document.getElementById('inject-fs').innerText);
-    injectProgram.loadAssets();
-    var injectSolver = new SolveProgram(renderer, injectProgram);
-    
-    var jacobiProgram = new Program(context, document.getElementById('jacobi-fs').innerText);
-    jacobiProgram.loadAssets();
-    var jacobiSolver = new SolveProgram(renderer, jacobiProgram);
-    
-    var divergenceProgram = new Program(context, document.getElementById('divergence-fs').innerText);
-    divergenceProgram.loadAssets();
-    var divergenceSolver = new SolveProgram(renderer, divergenceProgram);
-    
-    var subtractPressureGradientProgram = new Program(context, document.getElementById('subtract-pressure-gradient-fs').innerText);
-    subtractPressureGradientProgram.loadAssets();
-    var subtractPressureGradientSolver = new SolveProgram(renderer, subtractPressureGradientProgram);
-    
-    var drawProgram = new Program(context, document.getElementById('draw-fs').innerText);
-    drawProgram.loadAssets();
-    var copyTextureSolver = new SolveProgram(renderer, drawProgram);
-    
-    var debugDrawProgram = new Program(context, document.getElementById('debug-draw-fs').innerText);
-    debugDrawProgram.loadAssets();
+    var debugDrawProgram = programLoader.load('debug-draw');
     
     gl.clearColor(0,0,0,1);
     gl.enable(gl.DEPTH_TEST);
-    
     gl.viewport(0,0,gl.viewportWidth, gl.viewportHeight);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     
@@ -538,7 +537,7 @@ function webGlStart() {
     
     var solveLinearSystem = function(x, b, destination, alpha, beta) {
         for (var i=0; i < 20; i++) {
-            jacobiSolver.go([
+            solver.go(jacobiProgram, [
                 { name: 'x', type: 'texture', value: x.call(textureManager) },
                 { name: 'b', type: 'texture', value: b.call(textureManager) },
                 { name: 'alpha', type: 'uniform1f', value: alpha }, 
@@ -605,7 +604,8 @@ function webGlStart() {
                     injectParam = [textureParam('ink', textureManager.ink())];
                     injectParam.push(injectPosition[0]);
                     injectParam.push(injectPosition[1]);
-                    injectSolver.go(injectParam, textureManager.ink);
+                    solver.go(injectProgram, injectParam, textureManager.ink);
+                    //injectSolver.go(injectParam, textureManager.ink);
                 }
             
                 var newTime = Date.now();
@@ -629,24 +629,23 @@ function webGlStart() {
                     value: dt  
                 };
                 
-                perturbSolver.go([dtBinding, currentTextureParam(), textureParam('affectedField', textureManager.ink())], textureManager.vectorField);
+                solver.go(perturbProgram, [dtBinding, currentTextureParam(), textureParam('affectedField', textureManager.ink())], textureManager.vectorField);
                 
-                advectSolver.go([dtBinding, currentTextureParam(), textureParam('affectedField', textureManager.ink())], textureManager.ink);
-                advectSolver.go([dtBinding, currentTextureParam(), textureParam('affectedField', textureManager.vectorField())], textureManager.vectorField);
-                
+                solver.go(advectProgram, [dtBinding, currentTextureParam(), textureParam('affectedField', textureManager.ink())], textureManager.ink);
+                solver.go(advectProgram, [dtBinding, currentTextureParam(), textureParam('affectedField', textureManager.vectorField())], textureManager.vectorField);
                 
                 var diffusionCoeffecient = 0.000001;
                 var alpha = dt * diffusionCoeffecient * 256 * 256;
                 var beta = 1 + 4 * alpha;
-                solveLinearSystem(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, alpha, beta); // Diffuse
+                //solveLinearSystem(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, alpha, beta); // Diffuse
                                 
-                divergenceSolver.go([dtBinding, currentTextureParam()], textureManager.divergenceField);
+                solver.go(divergenceProgram, [dtBinding, currentTextureParam()], textureManager.divergenceField);
                 
                 alpha = 1;
                 beta = 4;
                 solveLinearSystem(textureManager.divergenceField, textureManager.pressure, textureManager.pressure, alpha, beta); // Pressure
                 
-                subtractPressureGradientSolver.go([dtBinding, currentTextureParam(), {
+                solver.go(subtractPressureGradientProgram, [dtBinding, currentTextureParam(), {
                     name: 'pressure',
                     type: 'texture',
                     value: textureManager.pressure()
