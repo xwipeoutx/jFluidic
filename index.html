@@ -12,17 +12,17 @@
 <script id="inject-fs" type="x-shader/x-fragment">
     precision mediump float;
     
-    varying vec2 vTextureCoord;
+    varying vec2 textureCoord;
     
-    uniform vec2 uPosition;
-    uniform vec4 uVelocity;
-    uniform sampler2D uVectorField;
+    uniform vec2 position;
+    uniform vec4 velocity;
+    uniform sampler2D vectorField;
     
     void main(void) {
-        if (length(uPosition - vTextureCoord) < 0.04) {
-            gl_FragColor = uVelocity;
+        if (length(position - textureCoord) < 0.04) {
+            gl_FragColor = velocity;
         } else {
-            gl_FragColor = texture2D(uVectorField, vTextureCoord);
+            gl_FragColor = texture2D(vectorField, textureCoord);
         }
     }
 </script>
@@ -47,20 +47,20 @@ void F4Neighbours2D(sampler2D tex,
 <script id="jacobi-fs" type="x-shader/x-fragment">
     precision mediump float;
     
-    varying vec2 vTextureCoord;
+    varying vec2 textureCoord;
     
-    uniform sampler2D uX;
-    uniform sampler2D uB;
-    uniform float uAlpha;
-    uniform float uBeta;
+    uniform sampler2D x;
+    uniform sampler2D b;
+    uniform float alpha;
+    uniform float beta;
     
     void main(void) {
     	vec4 left, right, up, down;
   
-    	vec4 current = texture2D(uX, vTextureCoord);
-    	F4Neighbours2D(uB, vTextureCoord, left, right, up, down);
+    	vec4 current = texture2D(x, textureCoord);
+    	F4Neighbours2D(b, textureCoord, left, right, up, down);
     	
-    	gl_FragColor = (current + uAlpha*(left + right + up + down)) / uBeta;
+    	gl_FragColor = (current + alpha*(left + right + up + down)) / beta;
     	//gl_FragColor = left;
     }
 </script>
@@ -68,12 +68,12 @@ void F4Neighbours2D(sampler2D tex,
 <script id="divergence-fs" type="xshader/x-fragment">
     precision mediump float;
     
-    varying vec2 vTextureCoord;
-    uniform sampler2D uVectorField;
+    varying vec2 textureCoord;
+    uniform sampler2D vectorField;
     
     void main() {
     	vec4 left, right, up, down;
-    	F4Neighbours2D(uVectorField, vTextureCoord, left, right, up, down);
+    	F4Neighbours2D(vectorField, textureCoord, left, right, up, down);
     	float result  = -0.5*((right.x - left.x) + (up.y - down.y))/256.; // division by 256 really not necessary - why bother?
     	gl_FragColor = vec4(result,0,0,0); // FIXME: Make 1-D
     }
@@ -82,15 +82,15 @@ void F4Neighbours2D(sampler2D tex,
 <script id="subtract-pressure-gradient-fs" type="xshader/x-fragment">
     precision mediump float;    
 
-    varying vec2 vTextureCoord;
-    uniform sampler2D uVectorField;
-    uniform sampler2D uPressure;
+    varying vec2 textureCoord;
+    uniform sampler2D vectorField;
+    uniform sampler2D pressure;
     
     void main(void) {
     	vec4 left, right, up, down;    	
-      	F4Neighbours2D(uPressure, vTextureCoord, left, right, up, down);
+      	F4Neighbours2D(pressure, textureCoord, left, right, up, down);
     
-    	vec4 result = texture2D(uVectorField, vTextureCoord);
+    	vec4 result = texture2D(vectorField, textureCoord);
     	result.x -= 0.5 * 256.*(right.x - left.x); // multiplication by 256 really not necessary - why bother?
     	result.y -= 0.5 * 256.*(up.x - down.x);
     	gl_FragColor = vec4(result.xy, 0, 1); // FIXME: Make 1-D
@@ -120,18 +120,18 @@ vec4 bilerp(sampler2D tex, vec2 s) {
 <script id="advect-fs" type="x-shader/x-fragment">
     precision mediump float;
     
-    varying vec2 vTextureCoord;
+    varying vec2 textureCoord;
     
-    uniform sampler2D uAffectedField;
-    uniform sampler2D uVectorField;
-    uniform float uDt;
+    uniform sampler2D affectedField;
+    uniform sampler2D vectorField;
+    uniform float dt;
     
     void main(void) {
         float speed = 30.0;
-        vec4 velocity = texture2D(uVectorField, vTextureCoord);
-        vec2 lastPosition = vTextureCoord - velocity.xy * uDt * speed/256.0;
+        vec4 velocity = texture2D(vectorField, textureCoord);
+        vec2 lastPosition = textureCoord - velocity.xy * dt * speed/256.0;
         
-        gl_FragColor = bilerp(uAffectedField, lastPosition);
+        gl_FragColor = bilerp(affectedField, lastPosition);
     }
 </script>
 
@@ -139,19 +139,19 @@ vec4 bilerp(sampler2D tex, vec2 s) {
 
     precision mediump float;
     
-    varying vec2 vTextureCoord;
+    varying vec2 textureCoord;
     
-    uniform sampler2D uAffectedField;
-    uniform sampler2D uVectorField;
-    uniform float uDt;
+    uniform sampler2D affectedField;
+    uniform sampler2D vectorField;
+    uniform float dt;
     
     void main(void) {
         
-        vec4 velocity = texture2D(uVectorField, vTextureCoord);
-        vec4 color =  texture2D(uAffectedField, vTextureCoord);
+        vec4 velocity = texture2D(vectorField, textureCoord);
+        vec4 color =  texture2D(affectedField, textureCoord);
         
-        //velocity.x = 1.0;//velocity.x + color.r * uDt;
-        velocity.y = velocity.y + (color.r - color.b) * uDt;
+        //velocity.x = 1.0;//velocity.x + color.r * dt;
+        velocity.y = velocity.y + (color.r - color.b) * dt;
         velocity.a = velocity.y;
         
         gl_FragColor = velocity;
@@ -162,14 +162,14 @@ vec4 bilerp(sampler2D tex, vec2 s) {
     precision mediump float;
     
     varying vec4 vColor;
-    varying vec2 vTextureCoord;
+    varying vec2 textureCoord;
     
-    uniform sampler2D uVectorField;
-    uniform float uDt;
+    uniform sampler2D vectorField;
+    uniform float dt;
     
     void main(void) {
         gl_FragColor = vec4(1,0,1,1);
-        gl_FragColor = texture2D(uVectorField, vTextureCoord);
+        gl_FragColor = texture2D(vectorField, textureCoord);
         gl_FragColor = abs(gl_FragColor);
     }
 </script>
@@ -177,30 +177,30 @@ vec4 bilerp(sampler2D tex, vec2 s) {
     precision mediump float;
     
     varying vec4 vColor;
-    varying vec2 vTextureCoord;
+    varying vec2 textureCoord;
     
-    uniform sampler2D uVectorField;
-    uniform float uDt;
+    uniform sampler2D vectorField;
+    uniform float dt;
     
     void main(void) {
         //gl_FragColor = vec4(1,0,1,1);
-        gl_FragColor = texture2D(uVectorField, vTextureCoord);
+        gl_FragColor = texture2D(vectorField, textureCoord);
         gl_FragColor.a = 1.;
         gl_FragColor = abs(gl_FragColor);
     }
 </script>
 <script id="shader-vs" type="x-shader/x-vertex">
-    attribute vec3 aVertexPosition;
-    attribute vec2 aTextureCoord;
+    attribute vec3 vertices;
+    attribute vec2 textureCoords;
     
-    uniform mat4 uMVMatrix;
-    uniform mat4 uPMatrix;
+    uniform mat4 modelViewMatrix;
+    uniform mat4 projectionMatrix;
 
-    varying vec2 vTextureCoord;
+    varying vec2 textureCoord;
 
     void main(void) {
-        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
-        vTextureCoord = aTextureCoord;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(vertices, 1.0);
+        textureCoord = textureCoords;
     }
 </script>
 
@@ -213,7 +213,7 @@ Program = Class.extend({
         this._source = sourceCode;
     },
     
-    loadAssets: function() {
+    loadAssets: function(params) {
         this._fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
         gl.shaderSource(this._fragmentShader, this._source);
         gl.compileShader(this._fragmentShader);
@@ -222,7 +222,13 @@ Program = Class.extend({
             throw "FAILED TO COMPILE SHADER: \n" + gl.getShaderInfoLog(this._fragmentShader) + this._source;
             
         this._program = this._context.createProgram(this._fragmentShader);
-        console.log("Loaded " + this._source);
+        
+        for (var key in params) {
+            params[key].location = gl.getUniformLocation(this._program, key);
+        }
+        this._params = params;
+        
+        console.log(this._params);
     },
     
     go: function(bindings) {
@@ -243,14 +249,41 @@ Program = Class.extend({
             var binding = bindings[i];
             
             if (binding.type == 'texture') {
-                gl.activeTexture(gl['TEXTURE' + textureNumber]);
-                gl.bindTexture(gl.TEXTURE_2D, binding.value);
-                gl.uniform1i(this._program.uniform[binding.name], textureNumber);
+                //gl.activeTexture(gl['TEXTURE' + textureNumber]);
+                //gl.bindTexture(gl.TEXTURE_2D, binding.value);
+                //gl.uniform1i(this._program.uniform[binding.name], textureNumber);
                 
-                textureNumber++;
+                //textureNumber++;
             } else {
-                gl[binding.type](this._program.uniform[binding.name], binding.value);
-            }  
+                //gl[binding.type](this._program.uniform[binding.name], binding.value);
+            }
+            
+            var param = this._params[binding.name];
+            if (!param) {
+                debugger;
+                console.log("NOOOOOOOOOOOOOOOOOO(t bound): ", binding);
+            }
+            if(param)
+            switch(param.type) {
+                case 'vec4':
+                    gl.uniform4fv(param.location, binding.value);
+                    break;
+                case 'vec2':
+                    gl.uniform2fv(param.location, binding.value);
+                    break;
+                case 'float':
+                    gl.uniform1f(param.location, binding.value);
+                    break;
+                case 'sampler2D':
+                    gl.activeTexture(gl['TEXTURE' + textureNumber]);
+                    gl.bindTexture(gl.TEXTURE_2D, binding.value);
+                    gl.uniform1i(param.location, textureNumber);
+                    
+                    textureNumber++;
+                    break;
+                default:
+                    debugger;
+            }
         }
     
     },
@@ -331,26 +364,26 @@ var SolveContext = Class.extend({
                 
         gl.useProgram(program);
         program.arguments = {
-            vertices: gl.getAttribLocation(program, "aVertexPosition"),
-            textureCoords: gl.getAttribLocation(program, "aTextureCoord")
+            vertices: gl.getAttribLocation(program, "vertices"),
+            textureCoords: gl.getAttribLocation(program, "textureCoords")
         };
         gl.enableVertexAttribArray(program.arguments.vertices);
         gl.enableVertexAttribArray(program.arguments.textureCoords);
         
         // LOLOLOLOLOLOL do this per-program, srsly FIXME
         program.uniform = {
-            projectionMatrix: gl.getUniformLocation(program, 'uPMatrix'),
-            modelViewMatrix: gl.getUniformLocation(program, 'uMVMatrix'),
-            vectorField: gl.getUniformLocation(program, 'uVectorField'),
-            affectedField: gl.getUniformLocation(program, 'uAffectedField'),
-            pressure: gl.getUniformLocation(program, 'uPressure'),
-            dt: gl.getUniformLocation(program, 'uDt'),
-            position: gl.getUniformLocation(program, 'uPosition'),
-            velocity: gl.getUniformLocation(program, 'uVelocity'),
-            x: gl.getUniformLocation(program, 'uX'),
-            b: gl.getUniformLocation(program, 'uB'),
-            alpha: gl.getUniformLocation(program, 'uAlpha'),
-            beta: gl.getUniformLocation(program, 'uBeta')
+            projectionMatrix: gl.getUniformLocation(program, 'projectionMatrix'),
+            modelViewMatrix: gl.getUniformLocation(program, 'modelViewMatrix'),
+            //vectorField: gl.getUniformLocation(program, 'vectorField'),
+            //affectedField: gl.getUniformLocation(program, 'affectedField'),
+            //pressure: gl.getUniformLocation(program, 'pressure'),
+            dt: gl.getUniformLocation(program, 'dt'),
+            //position: gl.getUniformLocation(program, 'position'),
+            velocity: gl.getUniformLocation(program, 'velocity'),
+            //x: gl.getUniformLocation(program, 'x'),
+            //b: gl.getUniformLocation(program, 'b'),
+            alpha: gl.getUniformLocation(program, 'alpha'),
+            beta: gl.getUniformLocation(program, 'beta')
         };
     
         // Uniforms are unchanging!    
@@ -421,6 +454,7 @@ var ProgramLoader = Class.extend({
         this._context = context;
     },
 
+    _uniformParamsExpression: /uniform +([a-zA-Z0-9]+) +([a-zA-Z0-9]+)/gi,
     load: function(fragmentName, utilScripts) {
         if (!utilScripts) utilScripts = [];
         var programSource = 'precision mediump float;';
@@ -429,10 +463,19 @@ var ProgramLoader = Class.extend({
         }
         programSource += document.getElementById(fragmentName + '-fs').innerText;
         
-        var perturbProgram = new Program(this._context, programSource);
-        perturbProgram.loadAssets();
+        var match, params = {};
+        while (match = this._uniformParamsExpression.exec(programSource)) {
+            params[match[2]] = {
+                type: match[1]
+            }
+        }
         
-        return perturbProgram;
+        var program = new Program(this._context, programSource);
+        program.loadAssets(params);
+        
+        console.log(this._params);
+        
+        return program;
     }
 });
 
@@ -504,7 +547,7 @@ function webGlStart() {
     var textureLoader = new TextureLoader(context);
     var solver = new Solver(renderer);
     
-    var perturbProgram = programLoader.load('perturb', [], { vectorField: { type: 'texture', shaderVariable: 'uVectorField' }});    
+    var perturbProgram = programLoader.load('perturb', [], { vectorField: { type: 'texture', shaderVariable: 'vectorField' }});    
     var advectProgram = programLoader.load('advect', ['bilerp']);    
     var injectProgram = programLoader.load('inject');    
     var jacobiProgram = programLoader.load('jacobi', ['neighbours'])    
@@ -601,13 +644,12 @@ function webGlStart() {
             
             while(timeThisFrame < maxSecondsBetweenFrames && solvesThisFrame < maxSolvesPerSecond*maxSecondsBetweenFrames && (!singleStep || solvesThisFrame == 0) ) {
                 if (injectPosition) {
-                    injectParam = [textureParam('ink', textureManager.ink())];
+                    injectParam = [];
                     injectParam.push(injectPosition[0]);
                     injectParam.push(injectPosition[1]);
+                    
                     solver.go(injectProgram, injectParam, textureManager.ink);
-                    //injectSolver.go(injectParam, textureManager.ink);
                 }
-            
                 var newTime = Date.now();
                 var dt = (newTime - time)/1000.0;
                 time = newTime;
@@ -639,13 +681,13 @@ function webGlStart() {
                 var beta = 1 + 4 * alpha;
                 //solveLinearSystem(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, alpha, beta); // Diffuse
                                 
-                solver.go(divergenceProgram, [dtBinding, currentTextureParam()], textureManager.divergenceField);
+                solver.go(divergenceProgram, [currentTextureParam()], textureManager.divergenceField);
                 
                 alpha = 1;
                 beta = 4;
                 solveLinearSystem(textureManager.divergenceField, textureManager.pressure, textureManager.pressure, alpha, beta); // Pressure
                 
-                solver.go(subtractPressureGradientProgram, [dtBinding, currentTextureParam(), {
+                solver.go(subtractPressureGradientProgram, [currentTextureParam(), {
                     name: 'pressure',
                     type: 'texture',
                     value: textureManager.pressure()
