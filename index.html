@@ -8,6 +8,7 @@
 <script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
 <script type="text/javascript" src="class.js"></script>
 <script type="text/javascript" src="jquery.js"></script>
+<script type="text/javascript" src="jfluidic.js"></script>
 
 <script id="inject-fs" type="x-shader/x-fragment">
     precision mediump float;
@@ -204,514 +205,42 @@ vec4 bilerp(sampler2D tex, vec2 s) {
     }
 </script>
 
-
 <script>
 
-Program = Class.extend({
-    construct: function(context, sourceCode) {
-        this._context = context;
-        this._source = sourceCode;
-    },
-    
-    loadAssets: function(params) {
-        this._fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
-        gl.shaderSource(this._fragmentShader, this._source);
-        gl.compileShader(this._fragmentShader);
-        
-        if (!gl.getShaderParameter(this._fragmentShader, gl.COMPILE_STATUS))
-            throw "FAILED TO COMPILE SHADER: \n" + gl.getShaderInfoLog(this._fragmentShader) + this._source;
-            
-        this._program = this._context.createProgram(this._fragmentShader);
-        
-        for (var key in params) {
-            params[key].location = gl.getUniformLocation(this._program, key);
-        }
-        this._params = params;
-    },
-    
-    go: function(bindings) {
-        gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT);
-        
-        gl.useProgram(this._program);
-        this._setupParameters(bindings);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, UsedEverywhere.Vertices.numItems);
-        
-    },
-    
-    _setupParameters: function(bindings) {
-        this._bindBuffer(this._program.arguments.vertices, UsedEverywhere.Vertices);
-        this._bindBuffer(this._program.arguments.textureCoords, UsedEverywhere.TextureCoords);
-    
-        var textureNumber = 0;
-        for (var key in bindings) {
-            var value = bindings[key];
-          
-            var param = this._params[key];
-            if (!param) {
-                console.log("Warning: Param not found in program: ", binding);
-                continue;
-            }
-            
-            // FIXME: Make params classes / typed, if it matters (Which it probably doesn't
-            switch(param.type) {
-                case 'vec4':
-                    gl.uniform4fv(param.location, value);
-                    break;
-                case 'vec2':
-                    gl.uniform2fv(param.location, value);
-                    break;
-                case 'float':
-                    gl.uniform1f(param.location, value);
-                    break;
-                case 'sampler2D':
-                    gl.activeTexture(gl['TEXTURE' + textureNumber]);
-                    gl.bindTexture(gl.TEXTURE_2D, value);
-                    gl.uniform1i(param.location, textureNumber);
-                    
-                    textureNumber++;
-                    break;
-                default:
-                    debugger;
-            }
-        }
-    
-    },
-    
-    _bindBuffer: function(argument, buffer) {
-        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-        gl.vertexAttribPointer(argument, buffer.itemSize, gl.FLOAT, false, 0, 0);
-    
-    },
-});
-var SolveProgram = Class.extend({
-    construct: function(renderer, program) {
-        this._renderer = renderer;
-        this._program = program;
-    },
-    
-    go: function(bindings, destination) {
-        this._renderer.begin();
-        this._program.go(bindings);
-        this._renderer.end(destination);
-    }
-});
-
-var Solver = Class.extend({
-    construct: function(renderer) {
-        this._renderer = renderer;
-    },
-    
-    go: function(program, bindings, destination) {
-        this._renderer.begin();
-        program.go(bindings);
-        this._renderer.end(destination);
-    }
-});
-
-var InjectProgram = Program.extend({
-    construct: function(context, sourceCode) {
-        this._super(context, sourceCode);
-    },
-});
-
-var Renderer = Class.extend({
-    construct: function(framebuffer, renderbuffer, textureManager) {
-        this._framebuffer = framebuffer;
-        this._renderbuffer = renderbuffer;
-        this._textureManager = textureManager;
-    },
-    
-    begin: function() {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, this._framebuffer);
-        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this._textureManager.buffer(), 0);
-    },
-    
-    end: function(destination) {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-        this._textureManager.swap(destination);
-    }
-});
-
-var SolveContext = Class.extend({
-    construct: function(vertexShader) {
-        this._vertexShader = vertexShader;
-    },
-    
-    createProgram: function(fragmentShader) {
-        var program = gl.createProgram();
-        // TODO: Put utils shaders in here, instead of dodgy string concat
-        gl.attachShader(program, this._vertexShader);
-        gl.attachShader(program, fragmentShader);
-        gl.linkProgram(program);
-        
-        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) 
-            throw "Failed initialization of shader";
-                
-        gl.useProgram(program);
-        program.arguments = {
-            vertices: gl.getAttribLocation(program, "vertices"),
-            textureCoords: gl.getAttribLocation(program, "textureCoords")
-        };
-        gl.enableVertexAttribArray(program.arguments.vertices);
-        gl.enableVertexAttribArray(program.arguments.textureCoords);
-        
-        var projectionMatrixLocation = gl.getUniformLocation(program, 'projectionMatrix');
-        var modelViewMatrixLocation = gl.getUniformLocation(program, 'modelViewMatrix');
-        
-        gl.uniformMatrix4fv(projectionMatrixLocation, false, UsedEverywhere.ProjectionMatrix);
-        gl.uniformMatrix4fv(modelViewMatrixLocation, false, UsedEverywhere.ModelViewMatrix);
-    
-        return program
-    }
-});
-
-var TextureLoader = Class.extend({
-    create: function(size) {
-        if (!gl.getExtension('OES_texture_float')) {
-            var text = 'This demo requires the OES_texture_float extension';
-            throw text;
-          }
-      
-        var texture = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST); // Linear?
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.FLOAT, null);
-        gl.bindTexture(gl.TEXTURE_2D, null);
-        return texture;
-    }
-});
-
-var TextureManager = Class.extend({
-    construct: function(vectorField, buffer, divergenceField, pressure, ink) {
-        this._vectorField = vectorField;
-        this._buffer = buffer;
-        this._divergenceField = divergenceField;
-        this._pressure = pressure;
-        this._ink = ink;
-    },
-   
-    vectorField: function(value) {
-        return this._vectorField = (value === $.undefined ? this._vectorField : value);
-    },
-        
-    buffer: function(value) {
-        return this._buffer = (value === $.undefined ? this._buffer : value);
-    },
-    
-    divergenceField: function(value) {
-        return this._divergenceField = (value === $.undefined ? this._divergenceField : value);
-    },
-    
-    pressure: function(value) {
-        return this._pressure = (value === $.undefined ? this._pressure : value);
-    },
-    
-    ink: function(value) {
-        return this._ink = (value === $.undefined ? this._ink : value);
-    },
-    
-    swap: function(fn) {
-        var tmp = this.buffer();
-        this.buffer(fn.call(this));
-        fn.call(this, tmp);
-    }    
-});
-
-var ProgramLoader = Class.extend({
-    construct: function(context) {
-        this._context = context;
-    },
-
-    _uniformParamsExpression: /uniform +([a-zA-Z0-9]+) +([a-zA-Z0-9]+)/gi,
-    load: function(fragmentName, utilScripts) {
-        if (!utilScripts) utilScripts = [];
-        var programSource = 'precision mediump float;';
-        for (var i=0; i < utilScripts.length; i++) {
-            programSource += document.getElementById(utilScripts[i] + '-util').innerText;
-        }
-        programSource += document.getElementById(fragmentName + '-fs').innerText;
-        
-        var match, params = {};
-        while (match = this._uniformParamsExpression.exec(programSource)) {
-            params[match[2]] = { type: match[1] };
-        }
-        
-        var program = new Program(this._context, programSource);
-        program.loadAssets(params);
-
-        return program;
-    }
-});
-
-var UsedEverywhere = {
-    setup: function() {
-        var createBuffer = function(data, itemSize, numItems) {
-            var buffer = gl.createBuffer();
-            gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
-            buffer.itemSize = itemSize;
-            buffer.numItems = numItems;
-            return buffer;
-        };
-        
-        UsedEverywhere.Vertices = createBuffer([1,1,0,  0,1,0,  1,0,0,  0,0,0], 3, 4);
-        UsedEverywhere.TextureCoords = createBuffer([1,1, 0,1, 1,0, 0,0], 2, 4);
-        
-        UsedEverywhere.ProjectionMatrix = mat4.create();
-        mat4.ortho(0,1,0,1,0,1, UsedEverywhere.ProjectionMatrix);
-        
-        UsedEverywhere.ModelViewMatrix = mat4.create();
-        mat4.identity(UsedEverywhere.ModelViewMatrix);
-    }
-};
-
-var gl,
-    shaderProgram,
-    squareVertexPositionBuffer, squareColorBuffer, squareTextureCoordBuffer,
-    pMatrix = mat4.create(),
-    mvMatrix = mat4.create(),
-    texture,
-    rttFramebuffer,
-    rttTexture
-    ;
-    
-function webGlStart() {
+$(function() {
     var canvas = document.getElementById('dest');
-    initGl(canvas);
-    UsedEverywhere.setup();
-
-    var vertexShader = gl.createShader(gl.VERTEX_SHADER);
-    gl.shaderSource(vertexShader, document.getElementById('shader-vs').innerText);
-    gl.compileShader(vertexShader);
-
-    var framebuffer = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    framebuffer.width = 256;
-    framebuffer.height = 256;
-    
-    var renderbuffer = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 256, 256);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
-    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      
-    var textureLoader = new TextureLoader();
-    var vectorField = textureLoader.create(256);
-    var buffer = textureLoader.create(256);
-    var divergenceField = textureLoader.create(256);
-    var pressure = textureLoader.create(256);
-    var ink = textureLoader.create(256);
-    
-    var textureManager = new TextureManager(vectorField, buffer, divergenceField, pressure, ink);
-    var context = new SolveContext(vertexShader);
-    
-    var renderer = new Renderer(framebuffer, renderbuffer, textureManager);
-    var programLoader = new ProgramLoader(context);
-    var textureLoader = new TextureLoader(context);
-    var solver = new Solver(renderer);
-    
-    var perturbProgram = programLoader.load('perturb', [], { vectorField: { type: 'texture', shaderVariable: 'vectorField' }});    
-    var advectProgram = programLoader.load('advect', ['bilerp']);    
-    var injectProgram = programLoader.load('inject');    
-    var jacobiProgram = programLoader.load('jacobi', ['neighbours'])    
-    var divergenceProgram = programLoader.load('divergence', ['neighbours']);    
-    var subtractPressureGradientProgram = programLoader.load('subtract-pressure-gradient', ['neighbours']);    
-    var drawProgram = programLoader.load('draw');
-    
-    var debugDrawProgram = programLoader.load('debug-draw');
-    
-    gl.clearColor(0,0,0,1);
-    gl.enable(gl.DEPTH_TEST);
-    gl.viewport(0,0,gl.viewportWidth, gl.viewportHeight);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    
-    var debugTexture = function(textureName) {
-        if (!$('#debug-' + textureName).is(":checked")) return;
-        
-        debugDrawProgram.go({
-            vectorField: textureManager[textureName]()
-        });        
-        $('#' + textureName).attr('src', $('canvas')[0].toDataURL());        
-    }
-    
-    var solveLinearSystem = function(x, b, destination, alpha, beta) {
-        for (var i=0; i < 20; i++) {
-            solver.go(jacobiProgram, {
-                x: x.call(textureManager),
-                b: b.call(textureManager),
-                alpha: alpha, 
-                beta: beta 
-            }, destination);
-        }
-    };
-    
-    var injectParams = null;
-    var injectVelocity = function(el, event) {
-        var injectR = $(el).data('button1') ? 1 : 0;
-        var injectB = $(el).data('button3') ? 1 : 0;
-        
-        if (!injectR && !injectB) {
-            injectParams = null;
-            return;
-        }
-        
-        var position = [event.offsetX/256.0, 1-event.offsetY/256.0];
-        var velocity = [injectR, 0, injectB, 1];
-        //if (event.ctrlKey) { velocity[0] *= -1; velocity[1] *= -1; velocity[2] = 1 };
-        
-        injectParams = {
-            position: position,
-            velocity: velocity
-        };
-    };
-    
-    $('canvas').mousedown(function(event) {
-        $(this).data('button'+event.which, true);
-        injectVelocity(this, event);
-        return false;
-    });
-    $('canvas').mousemove(function(event) {
-        injectVelocity(this, event);
-        return false;
-    });
-    
-    $('canvas').mouseout(function(event) { $(this).data('button1', false).data('button3', false); injectVelocity(this, event); return false; });
-    $('canvas').mouseup(function(event) { $(this).data('button' + event.which, false); injectVelocity(this, event); return false; });
-    $(document).bind('contextmenu', function(event) {  return false; });
-    
-    setTimeout(function() {
-        var frameNumber = 0;
-        var time = Date.now();
-        var frameStart = time;
-        var maxSecondsBetweenFrames = 0.01;
-        var maxSolvesPerSecond = 2000;
-       
-        setInterval(function() {
-            
-            if (!$('#go').is(':checked')) {
-                return;
-            }
-            
-            var singleStep = $("#single-step").is(":checked");
-            var timeThisFrame = 0;
-            var solvesThisFrame = 0;
-            
-            while(timeThisFrame < maxSecondsBetweenFrames && solvesThisFrame < maxSolvesPerSecond*maxSecondsBetweenFrames && (!singleStep || solvesThisFrame == 0) ) {
-                if (injectParams) {
-                    solver.go(injectProgram, injectParams, textureManager.ink);
-                }
-                
-                var newTime = Date.now();
-                var dt = (newTime - time)/1000.0;
-                time = newTime;
-                timeThisFrame += dt;
-                solvesThisFrame++;
-                
-                dt = dt * document.getElementById('speedup').value;
-                //dt = 0.01;
-                frameNumber++;
-                if (time - frameStart > 500) {
-                    document.getElementById('fps').innerHTML = 1000*frameNumber/(time - frameStart) + ' dt=' + dt;
-                    frameNumber = 0;
-                    frameStart = time;
-                }
-                
-                solver.go(perturbProgram, {
-                    dt: dt,
-                    vectorField: textureManager.vectorField(),
-                    affectedField: textureManager.ink()
-                }, textureManager.vectorField);
-                
-                solver.go(advectProgram, {
-                    dt: dt,
-                    vectorField: textureManager.vectorField(),
-                    affectedField: textureManager.ink()
-                }, textureManager.ink);
-                
-                solver.go(advectProgram, {
-                    dt: dt,
-                    vectorField: textureManager.vectorField(),
-                    affectedField: textureManager.vectorField()
-                }, textureManager.vectorField);
-                
-                var diffusionCoeffecient = 0.000001;
-                var alpha = dt * diffusionCoeffecient * 256 * 256;
-                var beta = 1 + 4 * alpha;
-                //solveLinearSystem(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, alpha, beta); // Diffuse
-                                
-                solver.go(divergenceProgram, {
-                    vectorField: textureManager.vectorField()
-                }, textureManager.divergenceField);
-                
-                alpha = 1;
-                beta = 4;
-                solveLinearSystem(textureManager.divergenceField, textureManager.pressure, textureManager.pressure, alpha, beta); // Pressure
-                
-                solver.go(subtractPressureGradientProgram, {
-                    vectorField: textureManager.vectorField(),
-                    pressure: textureManager.pressure()
-                }, textureManager.vectorField);
-                
-            }
-            debugTexture('ink');
-            debugTexture('vectorField');
-            debugTexture('pressure');
-            debugTexture('divergenceField');
-            
-            drawProgram.go({
-                vectorField: textureManager.ink()
-            });
-        }, 0);
-    }, 100);
-}
-
-function initGl(canvas) {
+    var gl;
     try {
         gl = canvas.getContext('experimental-webgl');
         gl.viewportWidth = canvas.width;
         gl.viewportHeight = canvas.height;
-    } catch(e) {
-    }
+    } catch(e) {}
     
-    if (!gl) alert("Could not create gl context - try and use a real browser");
-}
-
-function createRenderTargetTexture(size, initialData) {if (!gl.getExtension('OES_texture_float')) {
-    var text = 'This demo requires the OES_texture_float extension';
-        handleError(text);
-        throw text;
-      }
-  
-    var texture = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST); // Linear?
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    //gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.FLOAT, initialData);
-    gl.bindTexture(gl.TEXTURE_2D, null);
-    return texture;
-
-}
-
-function createTextureFromImage(src) {
-    var texture = gl.createTexture();
-    texture.image = new Image();
-    texture.image.onload = function() {
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture.image);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.bindTexture(gl.TEXTURE_2D, null);
-    };
-    texture.image.src = src;
-    return texture;
-};
+    if (!gl) alert("Could not create gl context - try and use a real browser (that is, Chrome)");
+    
+    var fluid = new jFluidic.Fluid(gl);
+    var interactor = new jFluidic.Interactor($(canvas), fluid);
+    
+    $(canvas).bind({
+        dragover: function() {
+            return false; // allows drop
+        },
+        
+        drop: function(event) {
+            var dataTransfer = event.originalEvent.dataTransfer;
+            var html = event.originalEvent.dataTransfer.getData('text/html');
+            if (!html) return false;
+            var src = $(html).attr('src');
+            
+            // Dodgy cross-site fix
+            $.get('mirror.php', { src: src }, function(result) {
+                fluid.loadImageAsInk(result);
+            });
+            
+            return false;
+        }
+    });
+});
 
 </script>
 <style>
@@ -728,7 +257,7 @@ function createTextureFromImage(src) {
     }
 </style>
 </head>
-<body onload="webGlStart()">
+<body>
 <h1>jFluidic</h1>
 <canvas id="dest" width=256 height=256>
 </canvas><br />
