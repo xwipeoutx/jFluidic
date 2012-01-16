@@ -227,8 +227,6 @@ Program = Class.extend({
             params[key].location = gl.getUniformLocation(this._program, key);
         }
         this._params = params;
-        
-        console.log(this._params);
     },
     
     go: function(bindings) {
@@ -245,38 +243,29 @@ Program = Class.extend({
         this._bindBuffer(this._program.arguments.textureCoords, UsedEverywhere.TextureCoords);
     
         var textureNumber = 0;
-        for(var i=0; i < bindings.length; i++) {
-            var binding = bindings[i];
-            
-            if (binding.type == 'texture') {
-                //gl.activeTexture(gl['TEXTURE' + textureNumber]);
-                //gl.bindTexture(gl.TEXTURE_2D, binding.value);
-                //gl.uniform1i(this._program.uniform[binding.name], textureNumber);
-                
-                //textureNumber++;
-            } else {
-                //gl[binding.type](this._program.uniform[binding.name], binding.value);
-            }
-            
-            var param = this._params[binding.name];
+        for (var key in bindings) {
+            var value = bindings[key];
+          
+            var param = this._params[key];
             if (!param) {
-                debugger;
-                console.log("NOOOOOOOOOOOOOOOOOO(t bound): ", binding);
+                console.log("Warning: Param not found in program: ", binding);
+                continue;
             }
-            if(param)
+            
+            // FIXME: Make params classes / typed, if it matters (Which it probably doesn't
             switch(param.type) {
                 case 'vec4':
-                    gl.uniform4fv(param.location, binding.value);
+                    gl.uniform4fv(param.location, value);
                     break;
                 case 'vec2':
-                    gl.uniform2fv(param.location, binding.value);
+                    gl.uniform2fv(param.location, value);
                     break;
                 case 'float':
-                    gl.uniform1f(param.location, binding.value);
+                    gl.uniform1f(param.location, value);
                     break;
                 case 'sampler2D':
                     gl.activeTexture(gl['TEXTURE' + textureNumber]);
-                    gl.bindTexture(gl.TEXTURE_2D, binding.value);
+                    gl.bindTexture(gl.TEXTURE_2D, value);
                     gl.uniform1i(param.location, textureNumber);
                     
                     textureNumber++;
@@ -338,10 +327,6 @@ var Renderer = Class.extend({
     },
     
     end: function(destination) {
-        //gl.bindTexture(gl.TEXTURE_2D, this._textureManager.buffer());
-        //gl.generateMipmap(gl.TEXTURE_2D);
-        //gl.bindTexture(gl.TEXTURE_2D, null);
-        
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         this._textureManager.swap(destination);
     }
@@ -370,25 +355,11 @@ var SolveContext = Class.extend({
         gl.enableVertexAttribArray(program.arguments.vertices);
         gl.enableVertexAttribArray(program.arguments.textureCoords);
         
-        // LOLOLOLOLOLOL do this per-program, srsly FIXME
-        program.uniform = {
-            projectionMatrix: gl.getUniformLocation(program, 'projectionMatrix'),
-            modelViewMatrix: gl.getUniformLocation(program, 'modelViewMatrix'),
-            //vectorField: gl.getUniformLocation(program, 'vectorField'),
-            //affectedField: gl.getUniformLocation(program, 'affectedField'),
-            //pressure: gl.getUniformLocation(program, 'pressure'),
-            dt: gl.getUniformLocation(program, 'dt'),
-            //position: gl.getUniformLocation(program, 'position'),
-            velocity: gl.getUniformLocation(program, 'velocity'),
-            //x: gl.getUniformLocation(program, 'x'),
-            //b: gl.getUniformLocation(program, 'b'),
-            alpha: gl.getUniformLocation(program, 'alpha'),
-            beta: gl.getUniformLocation(program, 'beta')
-        };
-    
-        // Uniforms are unchanging!    
-        gl.uniformMatrix4fv(program.uniform.projectionMatrix, false, UsedEverywhere.ProjectionMatrix);
-        gl.uniformMatrix4fv(program.uniform.modelViewMatrix, false, UsedEverywhere.ModelViewMatrix);
+        var projectionMatrixLocation = gl.getUniformLocation(program, 'projectionMatrix');
+        var modelViewMatrixLocation = gl.getUniformLocation(program, 'modelViewMatrix');
+        
+        gl.uniformMatrix4fv(projectionMatrixLocation, false, UsedEverywhere.ProjectionMatrix);
+        gl.uniformMatrix4fv(modelViewMatrixLocation, false, UsedEverywhere.ModelViewMatrix);
     
         return program
     }
@@ -465,16 +436,12 @@ var ProgramLoader = Class.extend({
         
         var match, params = {};
         while (match = this._uniformParamsExpression.exec(programSource)) {
-            params[match[2]] = {
-                type: match[1]
-            }
+            params[match[2]] = { type: match[1] };
         }
         
         var program = new Program(this._context, programSource);
         program.loadAssets(params);
-        
-        console.log(this._params);
-        
+
         return program;
     }
 });
@@ -562,40 +529,33 @@ function webGlStart() {
     gl.viewport(0,0,gl.viewportWidth, gl.viewportHeight);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     
-    var textureParam = function(name, texture) {
-        return {
-            type: 'texture', name: name, value: texture
-        };
-    };
-    var currentTextureParam = function() { 
-        return textureParam('vectorField', textureManager.vectorField());
-    };
-    
     var debugTexture = function(textureName) {
         if (!$('#debug-' + textureName).is(":checked")) return;
-        debugDrawProgram.go([textureParam(textureName, textureManager[textureName]())]);
-        $('#' + textureName).attr('src', $('canvas')[0].toDataURL());
         
+        debugDrawProgram.go({
+            vectorField: textureManager[textureName]()
+        });        
+        $('#' + textureName).attr('src', $('canvas')[0].toDataURL());        
     }
     
     var solveLinearSystem = function(x, b, destination, alpha, beta) {
         for (var i=0; i < 20; i++) {
-            solver.go(jacobiProgram, [
-                { name: 'x', type: 'texture', value: x.call(textureManager) },
-                { name: 'b', type: 'texture', value: b.call(textureManager) },
-                { name: 'alpha', type: 'uniform1f', value: alpha }, 
-                { name: 'beta', type: 'uniform1f', value: beta } 
-            ], destination);
+            solver.go(jacobiProgram, {
+                x: x.call(textureManager),
+                b: b.call(textureManager),
+                alpha: alpha, 
+                beta: beta 
+            }, destination);
         }
     };
     
-    var injectPosition = null;
+    var injectParams = null;
     var injectVelocity = function(el, event) {
         var injectR = $(el).data('button1') ? 1 : 0;
         var injectB = $(el).data('button3') ? 1 : 0;
         
         if (!injectR && !injectB) {
-            injectPosition = null;
+            injectParams = null;
             return;
         }
         
@@ -603,12 +563,12 @@ function webGlStart() {
         var velocity = [injectR, 0, injectB, 1];
         //if (event.ctrlKey) { velocity[0] *= -1; velocity[1] *= -1; velocity[2] = 1 };
         
-        injectPosition = [
-            { type: 'uniform2fv', name: 'position', value: position }, 
-            { type: 'uniform4fv', name: 'velocity', value: velocity },
-        ];
-        
+        injectParams = {
+            position: position,
+            velocity: velocity
+        };
     };
+    
     $('canvas').mousedown(function(event) {
         $(this).data('button'+event.which, true);
         injectVelocity(this, event);
@@ -624,8 +584,6 @@ function webGlStart() {
     $(document).bind('contextmenu', function(event) {  return false; });
     
     setTimeout(function() {
-        drawProgram.go([currentTextureParam()]);
-        
         var frameNumber = 0;
         var time = Date.now();
         var frameStart = time;
@@ -643,13 +601,10 @@ function webGlStart() {
             var solvesThisFrame = 0;
             
             while(timeThisFrame < maxSecondsBetweenFrames && solvesThisFrame < maxSolvesPerSecond*maxSecondsBetweenFrames && (!singleStep || solvesThisFrame == 0) ) {
-                if (injectPosition) {
-                    injectParam = [];
-                    injectParam.push(injectPosition[0]);
-                    injectParam.push(injectPosition[1]);
-                    
-                    solver.go(injectProgram, injectParam, textureManager.ink);
+                if (injectParams) {
+                    solver.go(injectProgram, injectParams, textureManager.ink);
                 }
+                
                 var newTime = Date.now();
                 var dt = (newTime - time)/1000.0;
                 time = newTime;
@@ -665,41 +620,51 @@ function webGlStart() {
                     frameStart = time;
                 }
                 
-                var dtBinding = {
-                    type: 'uniform1f',
-                    name: 'dt',
-                    value: dt  
-                };
+                solver.go(perturbProgram, {
+                    dt: dt,
+                    vectorField: textureManager.vectorField(),
+                    affectedField: textureManager.ink()
+                }, textureManager.vectorField);
                 
-                solver.go(perturbProgram, [dtBinding, currentTextureParam(), textureParam('affectedField', textureManager.ink())], textureManager.vectorField);
+                solver.go(advectProgram, {
+                    dt: dt,
+                    vectorField: textureManager.vectorField(),
+                    affectedField: textureManager.ink()
+                }, textureManager.ink);
                 
-                solver.go(advectProgram, [dtBinding, currentTextureParam(), textureParam('affectedField', textureManager.ink())], textureManager.ink);
-                solver.go(advectProgram, [dtBinding, currentTextureParam(), textureParam('affectedField', textureManager.vectorField())], textureManager.vectorField);
+                solver.go(advectProgram, {
+                    dt: dt,
+                    vectorField: textureManager.vectorField(),
+                    affectedField: textureManager.vectorField()
+                }, textureManager.vectorField);
                 
                 var diffusionCoeffecient = 0.000001;
                 var alpha = dt * diffusionCoeffecient * 256 * 256;
                 var beta = 1 + 4 * alpha;
                 //solveLinearSystem(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, alpha, beta); // Diffuse
                                 
-                solver.go(divergenceProgram, [currentTextureParam()], textureManager.divergenceField);
+                solver.go(divergenceProgram, {
+                    vectorField: textureManager.vectorField()
+                }, textureManager.divergenceField);
                 
                 alpha = 1;
                 beta = 4;
                 solveLinearSystem(textureManager.divergenceField, textureManager.pressure, textureManager.pressure, alpha, beta); // Pressure
                 
-                solver.go(subtractPressureGradientProgram, [currentTextureParam(), {
-                    name: 'pressure',
-                    type: 'texture',
-                    value: textureManager.pressure()
-                }], textureManager.vectorField);
+                solver.go(subtractPressureGradientProgram, {
+                    vectorField: textureManager.vectorField(),
+                    pressure: textureManager.pressure()
+                }, textureManager.vectorField);
                 
             }
             debugTexture('ink');
             debugTexture('vectorField');
             debugTexture('pressure');
             debugTexture('divergenceField');
-            drawProgram.go([textureParam('vectorField', textureManager.ink())]);
             
+            drawProgram.go({
+                vectorField: textureManager.ink()
+            });
         }, 0);
     }, 100);
 }
