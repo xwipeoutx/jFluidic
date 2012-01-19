@@ -18,9 +18,10 @@
     uniform vec2 position;
     uniform vec4 velocity;
     uniform sampler2D vectorField;
+    uniform float radius;
     
     void main(void) {
-        if (length(position - textureCoord) < 0.04) {
+        if (length(position - textureCoord) < radius) {
             gl_FragColor = velocity;
         } else {
             gl_FragColor = texture2D(vectorField, textureCoord);
@@ -31,17 +32,19 @@
 <script id="neighbours-util" type="x-shader/x-fragment">
 void F4Neighbours2D(sampler2D tex,
 					 vec2 s,
+					 vec2 d,
 					 out vec4 left,
 					 out vec4 right,
 					 out vec4 up,
 					 out vec4 down)
 {
-	vec3 p  = vec3(-1, 0, 1)/256.0;
+    vec2 dx = vec2(d.x, 0);
+    vec2 dy = vec2(0, d.y);
 	
-	down = texture2D(tex, s + p.yx);
-	up = texture2D(tex, s + p.yz);
-	left = texture2D(tex, s + p.xy);
-	right = texture2D(tex, s + p.zy);
+	down = texture2D(tex, s - dy);
+	up = texture2D(tex, s + dy);
+	left = texture2D(tex, s - dx);
+	right = texture2D(tex, s + dx);
 }
 </script>
 
@@ -49,6 +52,7 @@ void F4Neighbours2D(sampler2D tex,
     precision mediump float;
     
     varying vec2 textureCoord;
+    uniform vec3 d;
     
     uniform sampler2D x;
     uniform sampler2D b;
@@ -59,7 +63,7 @@ void F4Neighbours2D(sampler2D tex,
     	vec4 left, right, up, down;
   
     	vec4 current = texture2D(x, textureCoord);
-    	F4Neighbours2D(b, textureCoord, left, right, up, down);
+    	F4Neighbours2D(b, textureCoord, d.xy, left, right, up, down);
     	
     	gl_FragColor = (current + alpha*(left + right + up + down)) / beta;
     	//gl_FragColor = left;
@@ -70,12 +74,13 @@ void F4Neighbours2D(sampler2D tex,
     precision mediump float;
     
     varying vec2 textureCoord;
+    uniform vec3 d;
     uniform sampler2D vectorField;
     
     void main() {
     	vec4 left, right, up, down;
-    	F4Neighbours2D(vectorField, textureCoord, left, right, up, down);
-    	float result  = -0.5*((right.x - left.x) + (up.y - down.y))/256.; // division by 256 really not necessary - why bother?
+    	F4Neighbours2D(vectorField, textureCoord, d.xy, left, right, up, down);
+    	float result  = -0.5*((right.x - left.x) + (up.y - down.y));
     	gl_FragColor = vec4(result,0,0,0); // FIXME: Make 1-D
     }
 </script>
@@ -84,29 +89,30 @@ void F4Neighbours2D(sampler2D tex,
     precision mediump float;    
 
     varying vec2 textureCoord;
+    uniform vec3 d;
     uniform sampler2D vectorField;
     uniform sampler2D pressure;
     
     void main(void) {
     	vec4 left, right, up, down;    	
-      	F4Neighbours2D(pressure, textureCoord, left, right, up, down);
+      	F4Neighbours2D(pressure, textureCoord, d.xy, left, right, up, down);
     
     	vec4 result = texture2D(vectorField, textureCoord);
-    	result.x -= 0.5 * 256.*(right.x - left.x); // multiplication by 256 really not necessary - why bother?
-    	result.y -= 0.5 * 256.*(up.x - down.x);
+    	result.x -= 0.5 * (right.x - left.x);
+    	result.y -= 0.5 * (up.x - down.x);
     	gl_FragColor = vec4(result.xy, 0, 1); // FIXME: Make 1-D
 	}
 </script>
 
 <script id="bilerp-util" type="x-shader/x-fragment">
-vec4 bilerp(sampler2D tex, vec2 s) {
+vec4 bilerp(sampler2D tex, vec2 s, vec2 d) {
       vec4 st;
       
-      s = s * 256.0;
+      s = s / d.xy;
       st.xy = (floor(s - 0.5) + 0.5);
       st.zw = st.xy + 1.0;
       vec2 t = s - st.xy;
-      st = st / 256.0;
+      st = st * d.xyxy;
                 
       vec4 tex11 = texture2D(tex, st.xy);
       vec4 tex21 = texture2D(tex, st.zy);
@@ -125,14 +131,14 @@ vec4 bilerp(sampler2D tex, vec2 s) {
     
     uniform sampler2D affectedField;
     uniform sampler2D vectorField;
-    uniform float dt;
+    uniform vec3 d;
     
     void main(void) {
         float speed = 30.0;
         vec4 velocity = texture2D(vectorField, textureCoord);
-        vec2 lastPosition = textureCoord - velocity.xy * dt * speed/256.0;
+        vec2 lastPosition = textureCoord - velocity.xy * d.z * speed * d.xy;
         
-        gl_FragColor = bilerp(affectedField, lastPosition);
+        gl_FragColor = bilerp(affectedField, lastPosition, d.xy);
     }
 </script>
 
@@ -144,18 +150,38 @@ vec4 bilerp(sampler2D tex, vec2 s) {
     
     uniform sampler2D affectedField;
     uniform sampler2D vectorField;
-    uniform float dt;
+    uniform vec3 d;
     
     void main(void) {
         
         vec4 velocity = texture2D(vectorField, textureCoord);
         vec4 color =  texture2D(affectedField, textureCoord);
         
-        //velocity.x = 1.0;//velocity.x + color.r * dt;
-        velocity.y = velocity.y + (color.r - color.b) * dt;
+        velocity.y = velocity.y + 3.0*(color.r - color.b) * d.z;
         velocity.a = velocity.y;
         
         gl_FragColor = velocity;
+    }
+</script>
+
+<script id="boundary-fs" type="x-shader/x-fragment">
+
+    precision mediump float;
+    
+    varying vec2 textureCoord;
+    
+    uniform sampler2D field;
+    uniform vec3 d;
+    uniform float multiple;
+    
+    void main(void) {
+        vec4 result = texture2D(field, textureCoord);
+        if (textureCoord.x <= d.x) result.x = multiple * result.x;
+        if (textureCoord.x >= 1.0-d.x) result.x = multiple * result.x;
+        if (textureCoord.y <= d.x) result.y = multiple * result.y;
+        if (textureCoord.y >= 1.0-d.x) result.y = multiple * result.y;
+        
+        gl_FragColor = result;
     }
 </script>
 
@@ -166,7 +192,6 @@ vec4 bilerp(sampler2D tex, vec2 s) {
     varying vec2 textureCoord;
     
     uniform sampler2D vectorField;
-    uniform float dt;
     
     void main(void) {
         gl_FragColor = vec4(1,0,1,1);
@@ -181,7 +206,6 @@ vec4 bilerp(sampler2D tex, vec2 s) {
     varying vec2 textureCoord;
     
     uniform sampler2D vectorField;
-    uniform float dt;
     
     void main(void) {
         //gl_FragColor = vec4(1,0,1,1);
@@ -218,7 +242,10 @@ $(function() {
     
     if (!gl) alert("Could not create gl context - try and use a real browser (that is, Chrome)");
     
-    var fluid = new jFluidic.Fluid(gl);
+    var fluid = new jFluidic.Fluid(gl, {
+        width: 256, 
+        height: 256
+    });
     var interactor = new jFluidic.Interactor($(canvas), fluid);
     
     $(canvas).bind({
@@ -246,8 +273,6 @@ $(function() {
 <style>
     canvas { 
         border: 1px solid white;
-        width: 256px; 
-        height: 256px; 
     }
     body {
         background: #888;
@@ -259,8 +284,8 @@ $(function() {
 </head>
 <body>
 <h1>jFluidic</h1>
-<canvas id="dest" width=256 height=256>
-</canvas><br />
+<canvas id="dest" width=256 height=256></canvas>
+<br />
 <img class="texture" id="ink" title="Ink" />
 <img class="texture" id="vectorField" title="Vector Field" />
 <img class="texture" id="pressure" title="Pressure" />
@@ -270,7 +295,7 @@ $(function() {
 FPS: <span id="fps"></span><br />
 Speedup: <input type="number" id="speedup" value="1" />
 <br /><label><input type="checkbox" checked="checked" id="go" /> Go</label>
-<br /><label><input type="checkbox" checked="checked" id="single-step" /> Single step per frame (~60fps always)</label>
+<br /><label><input type="checkbox" checked="checked" id="single-step" /> Single step per frame (~60fps always. Buggy when off.)</label>
 <br /><label><input type="checkbox" achecked="checked" id="debug-ink" /> Debug Ink</label>
 <br /><label><input type="checkbox" achecked="checked" id="debug-vectorField" /> Debug Field</label>
 <br /><label><input type="checkbox" achecked="checked" id="debug-pressure" /> Debug Pressure</label>

@@ -11,8 +11,13 @@ var jFluidic = {
             this._gl.shaderSource(this._fragmentShader, this._source);
             this._gl.compileShader(this._fragmentShader);
             
-            if (!this._gl.getShaderParameter(this._fragmentShader, this._gl.COMPILE_STATUS))
-                throw "FAILED TO COMPILE SHADER: \n" + this._gl.getShaderInfoLog(this._fragmentShader) + this._source;
+            if (!this._gl.getShaderParameter(this._fragmentShader, this._gl.COMPILE_STATUS)) {
+                var lines = this._source.split("\n");
+                for (var i=0; i < lines.length; i++) {
+                    lines[i] = i + ": " + lines[i];
+                }
+                throw "FAILED TO COMPILE SHADER: \n" + this._gl.getShaderInfoLog(this._fragmentShader) + lines.join("\n");
+            }
                 
             this._program = this._context.createProgram(this._fragmentShader);
             
@@ -41,7 +46,7 @@ var jFluidic = {
               
                 var param = this._params[key];
                 if (!param) {
-                    console.log("Warning: Param not found in program: ", binding);
+                    console.log("Warning: Param not found in program: ", key);
                     continue;
                 }
                 
@@ -49,6 +54,9 @@ var jFluidic = {
                 switch(param.type) {
                     case 'vec4':
                         this._gl.uniform4fv(param.location, value);
+                        break;
+                    case 'vec3':
+                        this._gl.uniform3fv(param.location, value);
                         break;
                     case 'vec2':
                         this._gl.uniform2fv(param.location, value);
@@ -161,24 +169,15 @@ var jFluidic = {
         construct: function(gl) {
             this._gl = gl;
         },
-    
-        create: function(size) {
-            if (!this._gl.getExtension('OES_texture_float')) {
-                var text = 'This demo requires the OES_texture_float extension';
-                throw text;
-              }
-          
-            var texture = this._gl.createTexture();
-            this._gl.bindTexture(this._gl.TEXTURE_2D, texture);
-            this._gl.texParameteri(this._gl.TEXTURE_2D, this._gl.TEXTURE_MAG_FILTER, this._gl.NEAREST); // Linear?
-            this._gl.texParameteri(this._gl.TEXTURE_2D, this._gl.TEXTURE_MIN_FILTER, this._gl.NEAREST);
-            //this._gl.texParameteri(this._gl.TEXTURE_2D, this._gl.TEXTURE_WRAP_S, this._gl.CLAMP_TO_EDGE);
-            //this._gl.texParameteri(this._gl.TEXTURE_2D, this._gl.TEXTURE_WRAP_T, this._gl.CLAMP_TO_EDGE);
-            this._gl.texImage2D(this._gl.TEXTURE_2D, 0, this._gl.RGBA, size, size, 0, this._gl.RGBA, this._gl.FLOAT, null);
-            this._gl.bindTexture(this._gl.TEXTURE_2D, null);
-            return texture;
+        
+        createClamped: function(width, height) {
+            return this._create(width, height, true);
         },
         
+        createWrapped: function(width, height) {
+            return this._create(width, height, false);
+        },
+                
         createFromImage: function(src, callback) {
             var gl = this._gl;
             var texture = gl.createTexture();
@@ -195,6 +194,25 @@ var jFluidic = {
                 if (callback) callback(texture);
             };
             texture.image.src = src;
+            return texture;
+        },
+    
+        _create: function(width, height, clamp) {
+            if (!this._gl.getExtension('OES_texture_float')) {
+                var text = 'This demo requires the OES_texture_float extension';
+                throw text;
+              }
+          
+            var texture = this._gl.createTexture();
+            this._gl.bindTexture(this._gl.TEXTURE_2D, texture);
+            this._gl.texParameteri(this._gl.TEXTURE_2D, this._gl.TEXTURE_MAG_FILTER, this._gl.NEAREST); // Linear?
+            this._gl.texParameteri(this._gl.TEXTURE_2D, this._gl.TEXTURE_MIN_FILTER, this._gl.NEAREST);
+            if (clamp) {
+                this._gl.texParameteri(this._gl.TEXTURE_2D, this._gl.TEXTURE_WRAP_S, this._gl.CLAMP_TO_EDGE);
+                this._gl.texParameteri(this._gl.TEXTURE_2D, this._gl.TEXTURE_WRAP_T, this._gl.CLAMP_TO_EDGE);
+            }
+            this._gl.texImage2D(this._gl.TEXTURE_2D, 0, this._gl.RGBA, width, height, 0, this._gl.RGBA, this._gl.FLOAT, null);
+            this._gl.bindTexture(this._gl.TEXTURE_2D, null);
             return texture;
         }
     }),
@@ -328,8 +346,8 @@ var jFluidic = {
                 return;
             }
             
-            x = x / 256.0;
-            y = 1 - y / 256.0;
+            x = x / this._jCanvas.width();
+            y = 1 - y / this._jCanvas.height();
             
             var r = this._buttons[1] ? 1 : 0;
             var b = this._buttons[3] ? 1 : 0;
@@ -339,7 +357,16 @@ var jFluidic = {
     }),
  
     Fluid: Class.extend({
-        construct: function(gl) {
+        construct: function(gl, options) {
+            if (!options) options = {};
+            // defaults
+            if (!options.numIterations) options.numIterations = 20;
+            if (!options.drawRadius) options.drawRadius = 0.04;
+            if (!options.width) options.width = gl.viewportWidth || 256;
+            if (!options.height) options.height = gl.viewportHeight || 256;
+            
+            this._options = options;
+        
             var shaderProgram,
                 squareVertexPositionBuffer, squareColorBuffer, squareTextureCoordBuffer,
                 pMatrix = mat4.create(),
@@ -358,22 +385,23 @@ var jFluidic = {
         
             var framebuffer = gl.createFramebuffer();
             gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-            framebuffer.width = 256;
-            framebuffer.height = 256;
+            framebuffer.width = options.width;
+            framebuffer.height = options.height;
             
             var renderbuffer = gl.createRenderbuffer();
             gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
-            gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 256, 256);
+            gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, options.width, options.height);
             gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
             gl.bindRenderbuffer(gl.RENDERBUFFER, null);
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
               
+            var createFn = "createClamped";
             var textureLoader = this._textureLoader = new F.TextureLoader(gl);
-            var vectorField = textureLoader.create(256);
-            var buffer = textureLoader.create(256);
-            var divergenceField = textureLoader.create(256);
-            var pressure = textureLoader.create(256);
-            var ink = textureLoader.create(256);
+            var vectorField = textureLoader[createFn](options.width, options.height);
+            var buffer = textureLoader[createFn](options.width, options.height);
+            var divergenceField = textureLoader[createFn](options.width, options.height);
+            var pressure = textureLoader[createFn](options.width, options.height);
+            var ink = textureLoader[createFn](options.width, options.height);
             
             var textureManager = this._textureManager = new F.TextureManager(gl, vectorField, buffer, divergenceField, pressure, ink);
             var context = new F.SolveContext(gl, vertexShader);
@@ -388,6 +416,7 @@ var jFluidic = {
             var jacobiProgram = programLoader.load('jacobi', ['neighbours'])    
             var divergenceProgram = programLoader.load('divergence', ['neighbours']);    
             var subtractPressureGradientProgram = programLoader.load('subtract-pressure-gradient', ['neighbours']);    
+            var boundaryProgram = programLoader.load('boundary', []);    
             var drawProgram = this._drawProgram = programLoader.load('draw');
             
             var debugDrawProgram = programLoader.load('debug-draw');
@@ -406,17 +435,19 @@ var jFluidic = {
                 $('#' + textureName).attr('src', $('canvas')[0].toDataURL());        
             }
             
-            var solveLinearSystem = function(x, b, destination, alpha, beta) {
-                for (var i=0; i < 20; i++) {
+            var solveLinearSystem = function(x, b, destination, d, alpha, beta) {
+                for (var i=0; i < options.numIterations; i++) {
                     solver.go(jacobiProgram, {
                         x: x.call(textureManager),
                         b: b.call(textureManager),
+                        d: d,
                         alpha: alpha, 
                         beta: beta 
                     }, destination);
                 }
             };
             
+            var d = [1.0/options.width, 1.0/options.height, 0];
             setTimeout(function() {
                 var frameNumber = 0;
                 var time = Date.now();
@@ -433,11 +464,8 @@ var jFluidic = {
                     var timeThisFrame = 0;
                     var solvesThisFrame = 0;
                     
+                    
                     while(timeThisFrame < maxSecondsBetweenFrames && solvesThisFrame < maxSolvesPerSecond*maxSecondsBetweenFrames && (!singleStep || solvesThisFrame == 0) ) {
-                        if (self._injectParams) {
-                            solver.go(injectProgram, self._injectParams, textureManager.ink);
-                        }
-                        
                         var newTime = Date.now();
                         var dt = (newTime - time)/1000.0;
                         time = newTime;
@@ -445,6 +473,7 @@ var jFluidic = {
                         solvesThisFrame++;
                         
                         dt = dt * document.getElementById('speedup').value;
+                        
                         //dt = 0.01;
                         frameNumber++;
                         if (time - frameStart > 500) {
@@ -453,41 +482,63 @@ var jFluidic = {
                             frameStart = time;
                         }
                         
+                        d[2] = dt;
+                        
+                        if (self._injectParams) {
+                            solver.go(injectProgram, self._injectParams, textureManager.ink);
+                        }
+                        
                         solver.go(perturbProgram, {
-                            dt: dt,
+                            d: d,
                             vectorField: textureManager.vectorField(),
                             affectedField: textureManager.ink()
                         }, textureManager.vectorField);
                         
                         solver.go(advectProgram, {
-                            dt: dt,
+                            d: d,
                             vectorField: textureManager.vectorField(),
                             affectedField: textureManager.ink()
                         }, textureManager.ink);
                         
                         solver.go(advectProgram, {
-                            dt: dt,
+                            d: d,
                             vectorField: textureManager.vectorField(),
                             affectedField: textureManager.vectorField()
                         }, textureManager.vectorField);
                         
                         var diffusionCoeffecient = 0.000001;
-                        var alpha = dt * diffusionCoeffecient * 256 * 256;
+                        var alpha = dt * diffusionCoeffecient * options.width * options.height;
                         var beta = 1 + 4 * alpha;
-                        //solveLinearSystem(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, alpha, beta); // Diffuse
+                        //solveLinearSystem(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, d, alpha, beta); // Diffuse
+                        
                                         
                         solver.go(divergenceProgram, {
-                            vectorField: textureManager.vectorField()
+                            vectorField: textureManager.vectorField(),
+                            d: d
                         }, textureManager.divergenceField);
                         
                         alpha = 1;
                         beta = 4;
-                        solveLinearSystem(textureManager.divergenceField, textureManager.pressure, textureManager.pressure, alpha, beta); // Pressure
+                        solveLinearSystem(textureManager.divergenceField, textureManager.pressure, textureManager.pressure, d, alpha, beta); // Pressure
+                        
+                        solver.go(boundaryProgram, {
+                            field: textureManager.pressure(),
+                            multiple: 1,
+                            d: d
+                        }, textureManager.pressure);
                         
                         solver.go(subtractPressureGradientProgram, {
                             vectorField: textureManager.vectorField(),
+                            d: d,
                             pressure: textureManager.pressure()
                         }, textureManager.vectorField);
+                        
+                        solver.go(boundaryProgram, {
+                            field: textureManager.vectorField(),
+                            d: d,
+                            multiple: -1
+                        }, textureManager.vectorField);
+                        
                     }
                     debugTexture('ink');
                     debugTexture('vectorField');
@@ -504,7 +555,9 @@ var jFluidic = {
         inject: function(position, velocity) {
             this._injectParams = {
                 position: position,
-                velocity: velocity
+                velocity: velocity,
+                radius: this._options.drawRadius,
+                
             };
         },
         
