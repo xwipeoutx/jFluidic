@@ -1,8 +1,9 @@
 var jFluidic = {
     Program: Class.extend({
-        construct: function(gl, glProgramFactory, sourceCode) {
+        construct: function(gl, glProgramFactory, sharedParameterBinder, sourceCode) {
             this._gl = gl;
             this._glProgramFactory = glProgramFactory;
+            this._sharedParameterBinder = sharedParameterBinder;
             this._source = sourceCode;
         },
         
@@ -16,8 +17,8 @@ var jFluidic = {
             this._gl.clear(this._gl.DEPTH_BUFFER_BIT | this._gl.COLOR_BUFFER_BIT);
             
             this._gl.useProgram(this._program);
-            this._bindParameters(bindings);
-            this._gl.drawArrays(this._gl.TRIANGLE_STRIP, 0, jFluidic.UsedEverywhere.Vertices.numItems);
+            this._bindUniformParameters(bindings);
+            this._sharedParameterBinder.drawQuad(this._program);
             
         },
         _setupParameters: function(params) {
@@ -46,26 +47,11 @@ var jFluidic = {
                 lines[i] = i + ": " + lines[i];
             return "FAILED TO COMPILE SHADER: \n" + this._gl.getShaderInfoLog(this._fragmentShader) + lines.join("\n");
         },
-            
-        _bindParameters: function(bindings) {
-            this._bindVerticesAndTextureCoords();
-            this._bindUniformParameters(bindings);
-        },
-            
+        
         _bindUniformParameters: function(bindings) {
             this._textureNumber = 0;
             for (var key in bindings)
                 this._bindUniformParameter(key, bindings[key]);
-        },
-        
-        _bindVerticesAndTextureCoords: function() {
-            this._bindGlBuffer(this._program.arguments.vertices, jFluidic.UsedEverywhere.Vertices);
-            this._bindGlBuffer(this._program.arguments.textureCoords, jFluidic.UsedEverywhere.TextureCoords);
-        },
-        
-        _bindGlBuffer: function(argument, buffer) {
-            this._gl.bindBuffer(this._gl.ARRAY_BUFFER, buffer);
-            this._gl.vertexAttribPointer(argument, buffer.itemSize, this._gl.FLOAT, false, 0, 0);
         },
         
         _bindUniformParameter: function(key, value) {
@@ -152,9 +138,10 @@ var jFluidic = {
     }),
         
     GlProgramFactory: Class.extend({
-        construct: function(gl, vertexShader) {
+        construct: function(gl, vertexShader, sharedParameterBinder) {
             this._gl = gl;
             this._vertexShader = vertexShader;
+            this._sharedParameterBinder = sharedParameterBinder;
         },
         
         create: function(fragmentShader) {
@@ -184,7 +171,7 @@ var jFluidic = {
         
         _initializeParameters: function(program) {
             this._initializeVaryingParameters(program);
-            this._initializeMatrices(program);
+            this._sharedParameterBinder.bindMatrices(program);
         },
         
         _initializeVaryingParameters: function(program) {
@@ -194,13 +181,6 @@ var jFluidic = {
             };
             this._gl.enableVertexAttribArray(program.arguments.vertices);
             this._gl.enableVertexAttribArray(program.arguments.textureCoords);
-        },
-        
-        _initializeMatrices: function(program) {
-            var projectionMatrixLocation = this._gl.getUniformLocation(program, 'projectionMatrix');
-            var modelViewMatrixLocation = this._gl.getUniformLocation(program, 'modelViewMatrix');
-            this._gl.uniformMatrix4fv(projectionMatrixLocation, false, jFluidic.UsedEverywhere.ProjectionMatrix);
-            this._gl.uniformMatrix4fv(modelViewMatrixLocation, false, jFluidic.UsedEverywhere.ModelViewMatrix);
         }
     }),
         
@@ -219,7 +199,6 @@ var jFluidic = {
                 
         createFromImage: function(src, callback) {
             var texture = this._gl.createTexture();
-            texture.image = new Image();
             this._loadImageIntoTexture(texture, src, callback)
             return texture;
         },
@@ -234,6 +213,7 @@ var jFluidic = {
         
         _loadImageIntoTexture: function(texture, src, callback) {
             var self = this;
+            texture.image = new Image();
             texture.image.onload = function() {
                 self._initializeImageTexture(texture);
                 if (callback) callback(texture);
@@ -256,17 +236,17 @@ var jFluidic = {
         },
         
         _initializeImageTexture: function(texture) {
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture.image);
+            this._gl.bindTexture(this._gl.TEXTURE_2D, texture);
+            this._gl.pixelStorei(this._gl.UNPACK_FLIP_Y_WEBGL, true);
+            this._gl.texImage2D(this._gl.TEXTURE_2D, 0, this._gl.RGBA, this._gl.RGBA, this._gl.UNSIGNED_BYTE, texture.image);
             this._setupTextureParameters(true);
-            gl.bindTexture(gl.TEXTURE_2D, null);
+            this._gl.bindTexture(this._gl.TEXTURE_2D, null);
         },
         
         _setupTextureParameters: function(clamp) {
             this._setupMipMaps();
             if (clamp)
-                this._applyClamping
+                this._applyClamping();
         },
         
         _setupMipMaps: function() {
@@ -318,9 +298,10 @@ var jFluidic = {
     }),
         
     ProgramLoader: Class.extend({
-        construct: function(gl, glProgramFactory) {
+        construct: function(gl, glProgramFactory, sharedParameterBinder) {
             this._gl = gl;
             this._glProgramFactory = glProgramFactory;
+            this._sharedParameterBinder = sharedParameterBinder;
         },
     
         load: function(fragmentName, utilShaders) {
@@ -357,33 +338,63 @@ var jFluidic = {
         },
         
         _createAndLoadProgram: function(source, params) {
-            var program = new jFluidic.Program(this._gl, this._glProgramFactory, source);
+            var program = new jFluidic.Program(this._gl, this._glProgramFactory, this._sharedParameterBinder, source);
             program.loadAssets(params);
             return program;
         }
     }),
 
-    UsedEverywhere: {
-        setup: function(gl) {
-            var createBuffer = function(data, itemSize, numItems) {
-                var buffer = gl.createBuffer();
-                gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
-                buffer.itemSize = itemSize;
-                buffer.numItems = numItems;
-                return buffer;
-            };
-            
-            this.Vertices = createBuffer([1,1,0,  0,1,0,  1,0,0,  0,0,0], 3, 4);
-            this.TextureCoords = createBuffer([1,1, 0,1, 1,0, 0,0], 2, 4);
-            
-            this.ProjectionMatrix = mat4.create();
-            mat4.ortho(0,1,0,1,0,1, this.ProjectionMatrix);
-            
-            this.ModelViewMatrix = mat4.create();
-            mat4.identity(this.ModelViewMatrix);
+    SharedParameterBinder: Class.extend({
+        construct: function(gl) {
+            this._gl = gl;
+        },
+        
+        setup: function() {
+            this._vertices = this._createBuffer([1,1,0,  0,1,0,  1,0,0,  0,0,0], 3, 4);
+            this._textureCoords = this._createBuffer([1,1, 0,1, 1,0, 0,0], 2, 4);
+            this._projectionMatrix = this._createProjectionMatrix();
+            this._modelViewMatrix = this._createModelViewMatrix();
+        },
+        
+        bindMatrices: function(program) {
+            var projectionMatrixLocation = this._gl.getUniformLocation(program, 'projectionMatrix');
+            var modelViewMatrixLocation = this._gl.getUniformLocation(program, 'modelViewMatrix');
+            this._gl.uniformMatrix4fv(projectionMatrixLocation, false, this._projectionMatrix);
+            this._gl.uniformMatrix4fv(modelViewMatrixLocation, false, this._modelViewMatrix);
+        },
+        
+        drawQuad: function(program) {
+            this._bindGlBuffer(program.arguments.vertices, this._vertices);
+            this._bindGlBuffer(program.arguments.textureCoords, this._textureCoords);
+            this._gl.drawArrays(this._gl.TRIANGLE_STRIP, 0, this._vertices.numItems);//tfsbadjFluidic.UsedEverywhere.Vertices.numItems);
+        },
+        
+        _bindGlBuffer: function(argument, buffer) {
+            this._gl.bindBuffer(this._gl.ARRAY_BUFFER, buffer);
+            this._gl.vertexAttribPointer(argument, buffer.itemSize, this._gl.FLOAT, false, 0, 0);
+        },
+        
+        _createBuffer: function(data, itemSize, numItems) {
+            var buffer = this._gl.createBuffer();
+            this._gl.bindBuffer(this._gl.ARRAY_BUFFER, buffer);
+            this._gl.bufferData(this._gl.ARRAY_BUFFER, new Float32Array(data), this._gl.STATIC_DRAW);
+            buffer.itemSize = itemSize;
+            buffer.numItems = numItems;
+            return buffer;
+        },
+        
+        _createProjectionMatrix: function() {
+            var projectionMatrix = mat4.create();
+            mat4.ortho(0,1,0,1,0,1, projectionMatrix);
+            return projectionMatrix;
+        },
+        
+        _createModelViewMatrix: function() {
+            var modelViewMatrix = mat4.create();
+            mat4.identity(modelViewMatrix);
+            return modelViewMatrix;
         }
-    },
+    }),
  
     Interactor: Class.extend({
         construct: function(jCanvas, fluid) {
@@ -406,12 +417,12 @@ var jFluidic = {
         
         _onMouseDown: function(event) {
             this._buttons[event.which] = true;
-            this._injectVelocity(event.offsetX, event.offsetY);
+            this._inject(event.offsetX, event.offsetY);
             return false;
         },
         
         _onMouseMove: function(event) {
-            this._injectVelocity(event.offsetX, event.offsetY);
+            this._inject(event.offsetX, event.offsetY);
             return false;
         },
         
@@ -422,29 +433,30 @@ var jFluidic = {
         
         _onMouseUp: function(event) {
             this._buttons[event.which] = false;
-            this._injectVelocity(event.offsetX, event.offsetY);
+            this._inject(event.offsetX, event.offsetY);
         },
         
-        _injectVelocity: function(x, y) {
-            if (!this._buttons[1] && !this._buttons[3]) {
-                this._fluid.stopInject();
-                return;
-            }
-            
-            this._performInject(x, y);
+        _inject: function(x, y) {
+            if (this._isAnyButtonPressed())
+                this._performInject(x, y);
+            else
+                this._fluid.stopInject(); 
+        },
+        
+        _isAnyButtonPressed: function() {
+            return this._buttons[1] || this._buttons[3];
         },
         
         _performInject: function(x, y) {
             var position = this._getNormalizedPositionVector(x, y);
             var colorVector = this._getColorVector();
-            
             this._fluid.inject(position, colorVector);
         },
         
         _getNormalizedPositionVector: function(x, y) {
             x = x / this._jCanvas.width();
             y = 1 - y / this._jCanvas.height();
-            return [x,y];        
+            return [x, y];        
         },
         
         _getColorVector: function() {
@@ -455,15 +467,58 @@ var jFluidic = {
     }),
  
     Fluid: Class.extend({
-        construct: function(gl, options) {
+        _getOptions: function(gl, options) {
             if (!options) options = {};
-            // defaults
+            
             if (!options.numIterations) options.numIterations = 20;
             if (!options.drawRadius) options.drawRadius = 0.04;
             if (!options.width) options.width = gl.viewportWidth || 256;
             if (!options.height) options.height = gl.viewportHeight || 256;
             
-            this._options = options;
+            return options;
+        },
+        
+        _createVertexShader: function() {
+            var vertexShader = this._gl.createShader(this._gl.VERTEX_SHADER);
+            this._gl.shaderSource(vertexShader, document.getElementById('shader-vs').innerText);
+            this._gl.compileShader(vertexShader);
+            
+            return vertexShader;
+        },
+        
+        _createFramebuffer: function() {
+            var framebuffer = this._gl.createFramebuffer();
+            framebuffer.width = this._options.width;
+            framebuffer.height = this._options.height;
+            return framebuffer;
+        },
+        
+        _createRenderbuffer: function() {
+            var renderbuffer = this._gl.createRenderbuffer();
+            this._gl.bindRenderbuffer(this._gl.RENDERBUFFER, renderbuffer);
+            this._gl.renderbufferStorage(this._gl.RENDERBUFFER, this._gl.DEPTH_COMPONENT16, this._options.width, this._options.height);
+            this._gl.framebufferRenderbuffer(this._gl.FRAMEBUFFER, this._gl.DEPTH_ATTACHMENT, this._gl.RENDERBUFFER, renderbuffer);
+            this._gl.bindRenderbuffer(this._gl.RENDERBUFFER, null);
+            return renderbuffer;
+        },
+        
+        _createTextureManager: function(textureLoader) {
+            var vectorField = this._createTexture();
+            var buffer = this._createTexture();
+            var divergenceField = this._createTexture();
+            var pressure = this._createTexture();
+            var ink = this._createTexture();
+            
+            return new jFluidic.TextureManager(this._gl, vectorField, buffer, divergenceField, pressure, ink);
+        },
+        
+        _createTexture: function(textureLoader) {
+            return this._textureLoader.createClamped(this._options.width, this._options.height);
+        },
+    
+        construct: function(gl, options) {
+            this._gl = gl;
+            this._options = this._getOptions(gl, options);
         
             var shaderProgram,
                 squareVertexPositionBuffer, squareColorBuffer, squareTextureCoordBuffer,
@@ -475,37 +530,19 @@ var jFluidic = {
                 ;
             var self = this;
             var F = jFluidic;
-            F.UsedEverywhere.setup(gl);
+            var sharedParameterBinder = new jFluidic.SharedParameterBinder(this._gl);
+            sharedParameterBinder.setup();
         
-            var vertexShader = gl.createShader(gl.VERTEX_SHADER);
-            gl.shaderSource(vertexShader, document.getElementById('shader-vs').innerText);
-            gl.compileShader(vertexShader);
-        
-            var framebuffer = gl.createFramebuffer();
-            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-            framebuffer.width = options.width;
-            framebuffer.height = options.height;
-            
-            var renderbuffer = gl.createRenderbuffer();
-            gl.bindRenderbuffer(gl.RENDERBUFFER, renderbuffer);
-            gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, options.width, options.height);
-            gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, renderbuffer);
-            gl.bindRenderbuffer(gl.RENDERBUFFER, null);
-            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            var vertexShader = this._createVertexShader();
+            var framebuffer = this._createFramebuffer();            
+            var renderbuffer = this._createRenderbuffer();
               
-            var createFn = "createClamped";
-            var textureLoader = this._textureLoader = new F.TextureLoader(gl);
-            var vectorField = textureLoader[createFn](options.width, options.height);
-            var buffer = textureLoader[createFn](options.width, options.height);
-            var divergenceField = textureLoader[createFn](options.width, options.height);
-            var pressure = textureLoader[createFn](options.width, options.height);
-            var ink = textureLoader[createFn](options.width, options.height);
+            this._textureLoader = new jFluidic.TextureLoader(this._gl);
+            var textureManager = this._textureManager = this._createTextureManager();
+            var glProgramFactory = new F.GlProgramFactory(gl, vertexShader, sharedParameterBinder);
             
-            var textureManager = this._textureManager = new F.TextureManager(gl, vectorField, buffer, divergenceField, pressure, ink);
-            var glProgramFactory = new F.GlProgramFactory(gl, vertexShader);
-            
-            var renderer = new F.Renderer(gl, framebuffer, renderbuffer, textureManager);
-            var programLoader = new F.ProgramLoader(gl, glProgramFactory);
+            var renderer = new F.Renderer(gl, framebuffer, renderbuffer, this._textureManager);
+            var programLoader = new F.ProgramLoader(gl, glProgramFactory, sharedParameterBinder);
             var solver = this._solver = new F.Solver(gl, renderer);
             
             var perturbProgram = programLoader.load('perturb', [], { vectorField: { type: 'texture', shaderVariable: 'vectorField' }});    

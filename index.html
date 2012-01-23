@@ -232,16 +232,21 @@ vec4 bilerp(sampler2D tex, vec2 s, vec2 d) {
 <script>
 
 $(function() {
+    var createGlContext = function(canvas) {
+        var gl;
+        try {
+            gl = canvas.getContext('experimental-webgl');
+            gl.viewportWidth = canvas.width;
+            gl.viewportHeight = canvas.height;
+        } catch(e) {}
+        
+        if (!gl) alert("Could not create gl context - try and use a real browser (that is, Chrome)");
+        
+        return gl;
+    };
+    
     var canvas = document.getElementById('dest');
-    var gl;
-    try {
-        gl = canvas.getContext('experimental-webgl');
-        gl.viewportWidth = canvas.width;
-        gl.viewportHeight = canvas.height;
-    } catch(e) {}
-    
-    if (!gl) alert("Could not create gl context - try and use a real browser (that is, Chrome)");
-    
+    var gl = createGlContext(canvas);
     var fluid = new jFluidic.Fluid(gl, {
         width: 256, 
         height: 256
