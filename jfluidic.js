@@ -366,7 +366,7 @@ var jFluidic = {
         drawQuad: function(program) {
             this._bindGlBuffer(program.arguments.vertices, this._vertices);
             this._bindGlBuffer(program.arguments.textureCoords, this._textureCoords);
-            this._gl.drawArrays(this._gl.TRIANGLE_STRIP, 0, this._vertices.numItems);//tfsbadjFluidic.UsedEverywhere.Vertices.numItems);
+            this._gl.drawArrays(this._gl.TRIANGLE_STRIP, 0, this._vertices.numItems);
         },
         
         _bindGlBuffer: function(argument, buffer) {
@@ -474,6 +474,7 @@ var jFluidic = {
             if (!options.drawRadius) options.drawRadius = 0.04;
             if (!options.width) options.width = gl.viewportWidth || 256;
             if (!options.height) options.height = gl.viewportHeight || 256;
+            if (!options.dt) options.dt = 0.01;
             
             return options;
         },
@@ -582,7 +583,93 @@ var jFluidic = {
                 }
             };
             
-            var d = [1.0/options.width, 1.0/options.height, 0];
+            
+            var step = function(dt) {
+                var d = [1.0/options.width, 1.0/options.height, dt];
+                
+                if (self._injectParams) {
+                    self._injectParams.vectorField = textureManager.ink();
+                    solver.go(injectProgram, self._injectParams, textureManager.ink);
+                }
+                
+                solver.go(perturbProgram, {
+                    d: d,
+                    vectorField: textureManager.vectorField(),
+                    affectedField: textureManager.ink()
+                }, textureManager.vectorField);
+                
+                solver.go(advectProgram, {
+                    d: d,
+                    vectorField: textureManager.vectorField(),
+                    affectedField: textureManager.ink()
+                }, textureManager.ink);
+                
+                solver.go(advectProgram, {
+                    d: d,
+                    vectorField: textureManager.vectorField(),
+                    affectedField: textureManager.vectorField()
+                }, textureManager.vectorField);
+                
+                var diffusionCoeffecient = 0.000001;
+                var alpha = dt * diffusionCoeffecient * options.width * options.height;
+                var beta = 1 + 4 * alpha;
+                //solveLinearSystem(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, d, alpha, beta); // Diffuse
+                                                
+                solver.go(divergenceProgram, {
+                    vectorField: textureManager.vectorField(),
+                    d: d
+                }, textureManager.divergenceField);
+                
+                alpha = 1;
+                beta = 4;
+                solveLinearSystem(textureManager.divergenceField, textureManager.pressure, textureManager.pressure, d, alpha, beta); // Pressure
+                
+                solver.go(boundaryProgram, {
+                    field: textureManager.pressure(),
+                    multiple: 1,
+                    d: d
+                }, textureManager.pressure);
+                
+                solver.go(subtractPressureGradientProgram, {
+                    vectorField: textureManager.vectorField(),
+                    d: d,
+                    pressure: textureManager.pressure()
+                }, textureManager.vectorField);
+                
+                solver.go(boundaryProgram, {
+                    field: textureManager.vectorField(),
+                    d: d,
+                    multiple: -1
+                }, textureManager.vectorField);
+            };
+            
+            var leftOver = 0;
+            var constantStep = function(elapsed) {
+                var i=0; 
+                leftOver += elapsed;
+                while(leftOver >= options.dt) {
+                    leftOver -= options.dt;
+                    step(options.dt);
+                    i++;
+                }
+                if (i > 250) {
+                    step(leftOver);
+                    options.dt = -1;
+                    throw "Error: Constant solver has run away. Switching to real-time solvee"; 
+                }
+            };
+            
+            var draw = function() {
+                debugTexture('ink');
+                debugTexture('vectorField');
+                debugTexture('pressure');
+                debugTexture('divergenceField');
+                
+                drawProgram.go({
+                    vectorField: textureManager.ink()
+                });            
+            };
+            
             setTimeout(function() {
                 var frameNumber = 0;
                 var time = Date.now();
@@ -599,8 +686,8 @@ var jFluidic = {
                     var timeThisFrame = 0;
                     var solvesThisFrame = 0;
                     
-                    
-                    while(timeThisFrame < maxSecondsBetweenFrames && solvesThisFrame < maxSolvesPerSecond*maxSecondsBetweenFrames && (!singleStep || solvesThisFrame == 0) ) {
+                    while (solvesThisFrame == 0) {
+                    //while(timeThisFrame < maxSecondsBetweenFrames && solvesThisFrame < maxSolvesPerSecond*maxSecondsBetweenFrames && (!singleStep || solvesThisFrame == 0) ) {
                         var newTime = Date.now();
                         var dt = (newTime - time)/1000.0;
                         time = newTime;
@@ -617,72 +704,13 @@ var jFluidic = {
                             frameStart = time;
                         }
                         
-                        d[2] = dt;
-                        
-                        if (self._injectParams) {
-                            solver.go(injectProgram, self._injectParams, textureManager.ink);
+                        if (options.dt > 0) {
+                            constantStep(dt);
+                        } else {
+                            step(dt);
                         }
-                        
-                        solver.go(perturbProgram, {
-                            d: d,
-                            vectorField: textureManager.vectorField(),
-                            affectedField: textureManager.ink()
-                        }, textureManager.vectorField);
-                        
-                        solver.go(advectProgram, {
-                            d: d,
-                            vectorField: textureManager.vectorField(),
-                            affectedField: textureManager.ink()
-                        }, textureManager.ink);
-                        
-                        solver.go(advectProgram, {
-                            d: d,
-                            vectorField: textureManager.vectorField(),
-                            affectedField: textureManager.vectorField()
-                        }, textureManager.vectorField);
-                        
-                        var diffusionCoeffecient = 0.000001;
-                        var alpha = dt * diffusionCoeffecient * options.width * options.height;
-                        var beta = 1 + 4 * alpha;
-                        //solveLinearSystem(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, d, alpha, beta); // Diffuse
-                        
-                                        
-                        solver.go(divergenceProgram, {
-                            vectorField: textureManager.vectorField(),
-                            d: d
-                        }, textureManager.divergenceField);
-                        
-                        alpha = 1;
-                        beta = 4;
-                        solveLinearSystem(textureManager.divergenceField, textureManager.pressure, textureManager.pressure, d, alpha, beta); // Pressure
-                        
-                        solver.go(boundaryProgram, {
-                            field: textureManager.pressure(),
-                            multiple: 1,
-                            d: d
-                        }, textureManager.pressure);
-                        
-                        solver.go(subtractPressureGradientProgram, {
-                            vectorField: textureManager.vectorField(),
-                            d: d,
-                            pressure: textureManager.pressure()
-                        }, textureManager.vectorField);
-                        
-                        solver.go(boundaryProgram, {
-                            field: textureManager.vectorField(),
-                            d: d,
-                            multiple: -1
-                        }, textureManager.vectorField);
-                        
                     }
-                    debugTexture('ink');
-                    debugTexture('vectorField');
-                    debugTexture('pressure');
-                    debugTexture('divergenceField');
-                    
-                    drawProgram.go({
-                        vectorField: textureManager.ink()
-                    });
+                    draw();
                 }, 0);
             }, 100);
         },
