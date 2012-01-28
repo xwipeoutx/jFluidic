@@ -674,41 +674,29 @@ var jFluidic = {
                 var frameNumber = 0;
                 var time = Date.now();
                 var frameStart = time;
-                var maxSecondsBetweenFrames = 0.01;
-                var maxSolvesPerSecond = 2000;
                
-                setInterval(function() {                    
+                setInterval(function() {
                     if (!$('#go').is(':checked')) {
                         return;
                     }
                     
-                    var singleStep = $("#single-step").is(":checked");
-                    var timeThisFrame = 0;
-                    var solvesThisFrame = 0;
+                    var newTime = Date.now();
+                    var dt = (newTime - time)/1000.0;
+                    time = newTime;
                     
-                    while (solvesThisFrame == 0) {
-                    //while(timeThisFrame < maxSecondsBetweenFrames && solvesThisFrame < maxSolvesPerSecond*maxSecondsBetweenFrames && (!singleStep || solvesThisFrame == 0) ) {
-                        var newTime = Date.now();
-                        var dt = (newTime - time)/1000.0;
-                        time = newTime;
-                        timeThisFrame += dt;
-                        solvesThisFrame++;
-                        
-                        dt = dt * document.getElementById('speedup').value;
-                        
-                        //dt = 0.01;
-                        frameNumber++;
-                        if (time - frameStart > 500) {
-                            document.getElementById('fps').innerHTML = 1000*frameNumber/(time - frameStart) + ' dt=' + dt;
-                            frameNumber = 0;
-                            frameStart = time;
-                        }
-                        
-                        if (options.dt > 0) {
-                            constantStep(dt);
-                        } else {
-                            step(dt);
-                        }
+                    dt = dt * document.getElementById('speedup').value;
+                    
+                    frameNumber++;
+                    if (time - frameStart > 500) {
+                        document.getElementById('fps').innerHTML = 1000*frameNumber/(time - frameStart) + ' dt=' + dt;
+                        frameNumber = 0;
+                        frameStart = time;
+                    }
+                    
+                    if (options.dt > 0) {
+                        constantStep(dt);
+                    } else {
+                        step(dt);
                     }
                     draw();
                 }, 0);
@@ -730,8 +718,8 @@ var jFluidic = {
         
         loadImageAsInk: function(src) {
             var self = this;
-            this._textureLoader.createFromImage(src, function(texture) {
-                
+            
+            this._textureLoader.createFromImage(src, function(texture) {                
                 self._solver.go(self._drawProgram, {
                     vectorField: texture
                 }, self._textureManager.ink);

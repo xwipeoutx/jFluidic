@@ -245,13 +245,38 @@ $(function() {
         return gl;
     };
     
+    var createFluid = function(canvas) {
+        var gl = createGlContext(canvas);
+        var fluid = new jFluidic.Fluid(gl, {
+            width: 256, 
+            height: 256
+        });
+        return fluid;
+    };
+    
     var canvas = document.getElementById('dest');
-    var gl = createGlContext(canvas);
-    var fluid = new jFluidic.Fluid(gl, {
-        width: 256, 
-        height: 256
-    });
+    var fluid = createFluid(canvas);
     var interactor = new jFluidic.Interactor($(canvas), fluid);
+    
+    if (false) {
+        $(canvas).clone().attr('id', 'dest1').insertAfter(canvas);
+        $(canvas).clone().attr('id', 'dest2').insertAfter(canvas);
+        $(canvas).clone().attr('id', 'dest3').insertAfter(canvas);
+        
+        var fluid1 = createFluid(document.getElementById('dest1'));
+        var fluid2 = createFluid(document.getElementById('dest2'));
+        var fluid3 = createFluid(document.getElementById('dest3'));
+        var interactor1 = new jFluidic.Interactor($(canvas), fluid1);
+        var interactor2 = new jFluidic.Interactor($(canvas), fluid2);
+        var interactor3 = new jFluidic.Interactor($(canvas), fluid3);
+        fluid.oldLoadImageAsInk = fluid.loadImageAsInk;
+        fluid.loadImageAsInk = function(result) {
+            fluid.oldLoadImageAsInk(result);
+            fluid1.loadImageAsInk(result);
+            fluid2.loadImageAsInk(result);
+            fluid3.loadImageAsInk(result);
+        };
+    }
     
     $(canvas).bind({
         dragover: function() {
@@ -300,7 +325,6 @@ $(function() {
 FPS: <span id="fps"></span><br />
 Speedup: <input type="number" id="speedup" value="1" />
 <br /><label><input type="checkbox" checked="checked" id="go" /> Go</label>
-<br /><label><input type="checkbox" checked="checked" id="single-step" /> Single step per frame (~60fps always. Buggy when off.)</label>
 <br /><label><input type="checkbox" achecked="checked" id="debug-ink" /> Debug Ink</label>
 <br /><label><input type="checkbox" achecked="checked" id="debug-vectorField" /> Debug Field</label>
 <br /><label><input type="checkbox" achecked="checked" id="debug-pressure" /> Debug Pressure</label>
