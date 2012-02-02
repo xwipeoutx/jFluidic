@@ -326,7 +326,7 @@ var jFluidic = {
         },
         
         _getSourceFromDocument: function(domElementId) {
-            return document.getElementById(domElementId).innerText;
+            return document.getElementById(domElementId).innerHTML;
         },
         
         _uniformParamsExpression: /uniform +([a-zA-Z0-9]+) +([a-zA-Z0-9]+)/gi,
@@ -417,12 +417,12 @@ var jFluidic = {
         
         _onMouseDown: function(event) {
             this._buttons[event.which] = true;
-            this._inject(event.offsetX, event.offsetY);
+            this._inject(event);
             return false;
         },
         
         _onMouseMove: function(event) {
-            this._inject(event.offsetX, event.offsetY);
+            this._inject(event);
             return false;
         },
         
@@ -433,10 +433,12 @@ var jFluidic = {
         
         _onMouseUp: function(event) {
             this._buttons[event.which] = false;
-            this._inject(event.offsetX, event.offsetY);
+            this._inject(event);
         },
         
-        _inject: function(x, y) {
+        _inject: function(event) {
+            var x = event.pageX - event.target.offsetLeft;
+            var y = event.pageY - event.target.offsetTop;
             if (this._isAnyButtonPressed())
                 this._performInject(x, y);
             else
@@ -481,8 +483,13 @@ var jFluidic = {
         
         _createVertexShader: function() {
             var vertexShader = this._gl.createShader(this._gl.VERTEX_SHADER);
-            this._gl.shaderSource(vertexShader, document.getElementById('shader-vs').innerText);
+            this._gl.shaderSource(vertexShader, document.getElementById('shader-vs').innerHTML);
             this._gl.compileShader(vertexShader);
+            
+            //TODO: Abstract
+            
+            if (!this._gl.getShaderParameter(vertexShader, this._gl.COMPILE_STATUS))
+                throw "Failed to compile vertex shader: " + this._gl.getShaderInfoLog(vertexShader);
             
             return vertexShader;
         },
@@ -498,7 +505,6 @@ var jFluidic = {
             var renderbuffer = this._gl.createRenderbuffer();
             this._gl.bindRenderbuffer(this._gl.RENDERBUFFER, renderbuffer);
             this._gl.renderbufferStorage(this._gl.RENDERBUFFER, this._gl.DEPTH_COMPONENT16, this._options.width, this._options.height);
-            this._gl.framebufferRenderbuffer(this._gl.FRAMEBUFFER, this._gl.DEPTH_ATTACHMENT, this._gl.RENDERBUFFER, renderbuffer);
             this._gl.bindRenderbuffer(this._gl.RENDERBUFFER, null);
             return renderbuffer;
         },

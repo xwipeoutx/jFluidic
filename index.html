@@ -6,6 +6,7 @@
 <meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
 
 <script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
+<script type="text/javascript" src="webgl-debug.js"></script>
 <script type="text/javascript" src="class.js"></script>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="jfluidic.js"></script>
@@ -143,7 +144,6 @@ vec4 bilerp(sampler2D tex, vec2 s, vec2 d) {
 </script>
 
 <script id="perturb-fs" type="x-shader/x-fragment">
-
     precision mediump float;
     
     varying vec2 textureCoord;
@@ -232,10 +232,20 @@ vec4 bilerp(sampler2D tex, vec2 s, vec2 d) {
 <script>
 
 $(function() {
+    var makeDebug = function(gl) {
+        var throwOnGLError = function(err, funcName, args) {
+            var message = WebGLDebugUtils.glEnumToString(err);
+            debugger;
+            throw message + " was caused by call to: " + funcName;
+        };
+        gl = WebGLDebugUtils.makeDebugContext(gl, throwOnGLError);
+    };
+
     var createGlContext = function(canvas) {
         var gl;
         try {
             gl = canvas.getContext('experimental-webgl');
+            //gl = makeDebug(gl);
             gl.viewportWidth = canvas.width;
             gl.viewportHeight = canvas.height;
         } catch(e) {}
