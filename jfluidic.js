@@ -487,6 +487,100 @@ jFluidic.Interactor = Class.extend({
     }
 });
 
+jFluidic.FluidStepRunnerFactory = Class.extend({
+    construct: function(textureManager, solveStepFactory) {
+        this._textureManager = textureManager;
+        this._solveStepFactory = solveStepFactory;
+    },
+    
+    create: function(width, height, numJacobiIterations) {
+        var perturbSolveStep = this._solveStepFactory.create('perturb', []);
+        var advectSolveStep = this._solveStepFactory.create('advect', ['bilerp']);
+        var injectSolveStep = this._solveStepFactory.create('inject');
+        var jacobiSolveStep = this._solveStepFactory.create('jacobi', ['neighbours'])
+        var divergenceSolveStep = this._solveStepFactory.create('divergence', ['neighbours']);
+        var subtractPressureGradientSolveStep = this._solveStepFactory.create('subtract-pressure-gradient', ['neighbours']);
+        var boundarySolveStep = this._solveStepFactory.create('boundary', []);
+        var jacobiSolver = new jFluidic.JacobiSolver(jacobiSolveStep, this._textureManager, numJacobiIterations);
+
+        return new jFluidic.FluidStepRunner(width, height,
+            this._textureManager,
+            injectSolveStep, perturbSolveStep, advectSolveStep, jacobiSolver, divergenceSolveStep, subtractPressureGradientSolveStep, boundarySolveStep);
+    }
+});
+
+jFluidic.FluidStepRunner = Class.extend({
+    construct: function(width, height, textureManager, inject, perturb, advect, jacobi, divergence, subtractPressureGradient, boundary) {
+        this._width = width;
+        this._height = height;
+        this._textureManager = textureManager;
+        this._inject = inject;
+        this._perturb = perturb;
+        this._advect = advect;
+        this._jacobi = jacobi;
+        this._divergence = divergence;
+        this._subtractPressureGradient = subtractPressureGradient;
+        this._boundary = boundary;
+    },
+
+    step: function(dt) {
+        var d = [1.0/this._width, 1.0/this._height, dt];
+        var textureManager = this._textureManager;
+
+        this._perturb.go({
+            d: d,
+            vectorField: textureManager.vectorField(),
+            affectedField: textureManager.ink()
+        }, textureManager.vectorField);
+
+        this._advect.go({
+            d: d,
+            vectorField: textureManager.vectorField(),
+            affectedField: textureManager.ink()
+        }, textureManager.ink);
+
+        this._advect.go({
+            d: d,
+            vectorField: textureManager.vectorField(),
+            affectedField: textureManager.vectorField()
+        }, textureManager.vectorField);
+
+        var diffusionCoeffecient = 0.000001;
+        var alpha = dt * diffusionCoeffecient * this._width * this._height;
+        var beta = 1 + 4 * alpha;
+        //this._jacobi.go(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, d, alpha, beta); // Diffuse
+
+        this._divergence.go({
+            vectorField: textureManager.vectorField(),
+            d: d
+        }, textureManager.divergenceField);
+
+        alpha = 1;
+        beta = 4;
+
+        this._jacobi.go(textureManager.divergenceField, textureManager.pressure, textureManager.pressure, d, alpha, beta); // Pressure
+
+        this._boundary.go({
+            field: textureManager.pressure(),
+            multiple: 1,
+            d: d
+        }, textureManager.pressure);
+
+        this._subtractPressureGradient.go({
+            vectorField: textureManager.vectorField(),
+            d: d,
+            pressure: textureManager.pressure()
+        }, textureManager.vectorField);
+
+        this._boundary.go({
+            field: textureManager.vectorField(),
+            d: d,
+            multiple: -1
+        }, textureManager.vectorField);
+    }
+});
+
+
 jFluidic.Fluid = Class.extend({
     _getOptions: function(gl, options) {
         if (!options) options = {};
@@ -558,30 +652,17 @@ jFluidic.Fluid = Class.extend({
         this._textureLoader = new jFluidic.TextureLoader(this._gl);
         var textureManager = this._textureManager = this._createTextureManager();
         var glProgramFactory = new F.GlProgramFactory(gl, vertexShader, sharedParameterBinder);
-        
         var renderer = new F.ToTextureRenderer(gl, framebuffer, renderbuffer, this._textureManager);
         var programLoader = new F.ProgramLoader(gl, glProgramFactory, sharedParameterBinder);
         var solveStepFactory = new F.SolveStepFactory(gl, renderer, programLoader);
 
         var drawProgram = this._drawProgram = programLoader.load('draw');
-        
-        var perturbSolveStep = solveStepFactory.create('perturb', []);  
-        var advectSolveStep = solveStepFactory.create('advect', ['bilerp']);  
-        var injectSolveStep = solveStepFactory.create('inject');    
-        var jacobiSolveStep = solveStepFactory.create('jacobi', ['neighbours'])    
-        var divergenceSolveStep = solveStepFactory.create('divergence', ['neighbours']);    
-        var subtractPressureGradientSolveStep = solveStepFactory.create('subtract-pressure-gradient', ['neighbours']);    
-        var boundarySolveStep = solveStepFactory.create('boundary', []);    
-        var drawSolveStep = programLoader.load('draw');
-        var jacobiSolver = new jFluidic.JacobiSolver(jacobiSolveStep, textureManager, self._options.numIterations);
-        
+
+        var injectSolveStep = solveStepFactory.create('inject');
+        var fluidStepRunnerFactory = new jFluidic.FluidStepRunnerFactory(textureManager, solveStepFactory);
+        var stepRunner = fluidStepRunnerFactory.create(options.width, options.height, options.numIterations);
         var debugDrawProgram = programLoader.load('debug-draw');
-        
-        gl.clearColor(0,0,0,1);
-        gl.enable(gl.DEPTH_TEST);
-        gl.viewport(0,0,gl.viewportWidth, gl.viewportHeight);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-        
+
         var debugTexture = function(textureName) {
             if (!$('#debug-' + textureName).is(":checked")) return;
             
@@ -591,6 +672,8 @@ jFluidic.Fluid = Class.extend({
             $('#' + textureName).attr('src', $('canvas')[0].toDataURL());        
         }
 
+        //var stepRunner = new jFluidic.FluidStepRunner(options.width, options.height, textureManager, injectSolveStep, perturbSolveStep, advectSolveStep, jacobiSolver, divergenceSolveStep, subtractPressureGradientSolveStep, boundarySolveStep)
+
         var step = function(dt) {
             var d = [1.0/options.width, 1.0/options.height, dt];
             
@@ -598,57 +681,8 @@ jFluidic.Fluid = Class.extend({
                 self._injectParams.vectorField = textureManager.ink();
                 injectSolveStep.go(self._injectParams, textureManager.ink);
             }
-            
-            perturbSolveStep.go({
-                d: d,
-                vectorField: textureManager.vectorField(),
-                affectedField: textureManager.ink()
-            }, textureManager.vectorField);
-            
-            advectSolveStep.go({
-                d: d,
-                vectorField: textureManager.vectorField(),
-                affectedField: textureManager.ink()
-            }, textureManager.ink);
-            
-            advectSolveStep.go({
-                d: d,
-                vectorField: textureManager.vectorField(),
-                affectedField: textureManager.vectorField()
-            }, textureManager.vectorField);
-            
-            var diffusionCoeffecient = 0.000001;
-            var alpha = dt * diffusionCoeffecient * options.width * options.height;
-            var beta = 1 + 4 * alpha;
-            //jacobiSolver.go(textureManager.vectorField, textureManager.vectorField, textureManager.vectorField, d, alpha, beta); // Diffuse
 
-            divergenceSolveStep.go({
-                vectorField: textureManager.vectorField(),
-                d: d
-            }, textureManager.divergenceField);
-            
-            alpha = 1;
-            beta = 4;
-
-            jacobiSolver.go(textureManager.divergenceField, textureManager.pressure, textureManager.pressure, d, alpha, beta); // Pressure
-            
-            boundarySolveStep.go({
-                field: textureManager.pressure(),
-                multiple: 1,
-                d: d
-            }, textureManager.pressure);
-            
-            subtractPressureGradientSolveStep.go({
-                vectorField: textureManager.vectorField(),
-                d: d,
-                pressure: textureManager.pressure()
-            }, textureManager.vectorField);
-            
-            boundarySolveStep.go({
-                field: textureManager.vectorField(),
-                d: d,
-                multiple: -1
-            }, textureManager.vectorField);
+            stepRunner.step(dt);
         };
         
         var leftOver = 0;
@@ -685,6 +719,7 @@ jFluidic.Fluid = Class.extend({
            
             setInterval(function() {
                 if (!$('#go').is(':checked')) {
+                    time = Date.now();
                     return;
                 }
                 
