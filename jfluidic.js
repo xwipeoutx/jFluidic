@@ -657,6 +657,44 @@ jFluidic.ConstantStepSolver = Class.extend({
     }
 });
 
+jFluidic.FpsCalculator = Class.extend({
+    construct: function () {
+        this._totalFrameCount = 0;
+        this._totalElapsedSeconds = 0;
+
+        this._recentFrameCount = 0;
+        this._recentElapsedSecondsAverage = 0;
+    },
+
+    notifyFrame: function (numSeconds) {
+        this._totalFrameCount++;
+        this._totalElapsedSeconds += numSeconds;
+
+        this._updateRecentFrameData(numSeconds);
+        return "avg=" + this.getAverageFps() + "; recent=" + this.getRecentFps();
+    },
+
+    _updateRecentFrameData: function (numSeconds) {
+        if (numSeconds == 0) return;
+        if (this._recentFrameCount > 100)
+            this._recentFrameCount = 5;
+
+        this._recentElapsedSecondsAverage = (this._recentElapsedSecondsAverage * this._recentFrameCount + numSeconds) / (++this._recentFrameCount);
+    },
+
+    getAverageFps: function () {
+        return this._totalFrameCount / this._totalElapsedSeconds;
+    },
+
+    getRecentFps: function () {
+        return 1/this._recentElapsedSecondsAverage;
+    },
+
+    getTotalFrameCount: function() {
+        return this._totalFrameCount;
+    }
+});
+
 jFluidic.Fluid = Class.extend({
     _getOptions: function (gl, options) {
         if (!options) options = {};
@@ -666,6 +704,7 @@ jFluidic.Fluid = Class.extend({
         if (!options.width) options.width = gl.viewportWidth || 256;
         if (!options.height) options.height = gl.viewportHeight || 256;
         if (!options.dt) options.dt = 0.01;
+        if (!options.speedMultiplier) options.speedMultiplier = 1;
 
         return options;
     },
@@ -700,7 +739,7 @@ jFluidic.Fluid = Class.extend({
         var programLoader = new jFluidic.ProgramLoader(gl, glProgramFactory, sharedParameterBinder);
         var solveStepFactory = new jFluidic.SolveStepFactory(gl, renderer, programLoader);
 
-        var drawProgram = this._drawProgram = programLoader.load('draw');
+        this._drawProgram = this._drawProgram = programLoader.load('draw');
 
         this._injectSolveStep = solveStepFactory.create('inject');
         var fluidStepRunnerFactory = new jFluidic.FluidStepRunnerFactory(textureManager, solveStepFactory);
@@ -708,6 +747,7 @@ jFluidic.Fluid = Class.extend({
         var debugDrawProgram = programLoader.load('debug-draw');
 
         this._constantStepSolver = new jFluidic.ConstantStepSolver(stepRunner, options.dt);
+        this._fpsCalculator = new jFluidic.FpsCalculator();
 
         var debugTexture = function (textureName) {
             if (!$('#debug-' + textureName).is(":checked")) return;
@@ -725,49 +765,53 @@ jFluidic.Fluid = Class.extend({
             debugTexture('pressure');
             debugTexture('divergenceField');
 
-            drawProgram.go({
-                vectorField: textureManager.ink()
-            });
         };
 
         setTimeout(function () {
-            var frameNumber = 0;
-            var time = Date.now();
-            var frameStart = time;
-
-            setInterval(function () {
-                if (!$('#go').is(':checked')) {
-                    time = Date.now();
-                    return;
-                }
-
-                var newTime = Date.now();
-                var dt = (newTime - time) / 1000.0;
-                time = newTime;
-
-                dt = dt * document.getElementById('speedup').value;
-
-                frameNumber++;
-                if (time - frameStart > 500) {
-                    document.getElementById('fps').innerHTML = 1000 * frameNumber / (time - frameStart) + ' dt=' + dt;
-                    frameNumber = 0;
-                    frameStart = time;
-                }
-
-                self.step(dt);
-
-                draw();
-            }, 0);
+            self.start();
         }, 100);
     },
 
+    setSpeedMultiplier: function(value) { this._options.speedMultiplier = value; },
+    
+    start: function () {
+        this._previousTime = Date.now();
+        this._intervalId = setInterval($.proxy(this._autoStep, this), 0);
+    },
+
+    stop: function () {
+        if (this._intervalId) {
+            clearInterval(this._intervalId);
+            this._intervalId = false;
+        }
+    },
+
+    _autoStep: function () {
+        var newTime = Date.now();
+        var dt = (newTime - this._previousTime) / 1000.0;
+        this._previousTime = newTime;
+
+        this.step(dt * this._options.speedMultiplier);
+        this.draw();
+        
+        if (this._fpsCalculator.getTotalFrameCount() % 100 == 50)
+            document.getElementById('fps').innerHTML = this._fpsCalculator.getRecentFps();
+    },
+
     step: function (dt) {
+        this._fpsCalculator.notifyFrame(dt);
+
         if (this._injectParams) {
             this._injectParams.vectorField = this._textureManager.ink();
             this._injectSolveStep.go(this._injectParams, this._textureManager.ink);
         }
         this._constantStepSolver.step(dt);
-        //stepRunner.step(dt);
+    },
+
+    draw: function () {
+        this._drawProgram.go({
+            vectorField: this._textureManager.ink()
+        });
     },
 
     inject: function (position, velocity) {

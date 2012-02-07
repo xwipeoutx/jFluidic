@@ -307,6 +307,17 @@ $(function() {
             return false;
         }
     });
+    
+    $("#go").change(function() {
+        if ($(this).is(":checked"))
+            fluid.start();
+        else
+            fluid.stop();
+    });
+        
+    $('#speedup').change(function() {
+        fluid.setSpeedMultiplier($(this).val());
+    });
 });
 
 </script>
