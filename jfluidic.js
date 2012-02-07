@@ -467,7 +467,6 @@ jFluidic.Interactor = Class.extend({
 
     _onMouseOut: function (event) {
         this._buttons = {};
-        this._fluid.stopInject();
     },
 
     _onMouseUp: function (event) {
@@ -480,8 +479,6 @@ jFluidic.Interactor = Class.extend({
         var y = event.pageY - event.target.offsetTop;
         if (this._isAnyButtonPressed())
             this._performInject(x, y);
-        else
-            this._fluid.stopInject();
     },
 
     _isAnyButtonPressed: function () {
@@ -516,7 +513,6 @@ jFluidic.FluidStepRunnerFactory = Class.extend({
     create: function (width, height, numJacobiIterations) {
         var perturbSolveStep = this._solveStepFactory.create('perturb', []);
         var advectSolveStep = this._solveStepFactory.create('advect', ['bilerp']);
-        var injectSolveStep = this._solveStepFactory.create('inject');
         var jacobiSolveStep = this._solveStepFactory.create('jacobi', ['neighbours'])
         var divergenceSolveStep = this._solveStepFactory.create('divergence', ['neighbours']);
         var subtractPressureGradientSolveStep = this._solveStepFactory.create('subtract-pressure-gradient', ['neighbours']);
@@ -525,16 +521,15 @@ jFluidic.FluidStepRunnerFactory = Class.extend({
 
         return new jFluidic.FluidStepRunner(width, height,
             this._textureManager,
-            injectSolveStep, perturbSolveStep, advectSolveStep, linearSolver, divergenceSolveStep, subtractPressureGradientSolveStep, boundarySolveStep);
+            perturbSolveStep, advectSolveStep, linearSolver, divergenceSolveStep, subtractPressureGradientSolveStep, boundarySolveStep);
     }
 });
 
 jFluidic.FluidStepRunner = Class.extend({
-    construct: function (width, height, textureManager, inject, perturb, advect, linearSolver, divergence, subtractPressureGradient, boundary) {
+    construct: function (width, height, textureManager, perturb, advect, linearSolver, divergence, subtractPressureGradient, boundary) {
         this._width = width;
         this._height = height;
         this._textureManager = textureManager;
-        this._inject = inject;
         this._perturb = perturb;
         this._advect = advect;
         this._linearSolver = linearSolver;
@@ -726,7 +721,6 @@ jFluidic.Fluid = Class.extend({
         this._gl = gl;
         this._options = this._getOptions(gl, options);
 
-        var self = this;
         var sharedParameterBinder = new jFluidic.SharedParameterBinder(this._gl);
         sharedParameterBinder.setup();
 
@@ -764,12 +758,9 @@ jFluidic.Fluid = Class.extend({
             debugTexture('vectorField');
             debugTexture('pressure');
             debugTexture('divergenceField');
-
         };
 
-        setTimeout(function () {
-            self.start();
-        }, 100);
+        setTimeout($.proxy(this.start,  this), 100);
     },
 
     setSpeedMultiplier: function(value) { this._options.speedMultiplier = value; },
@@ -786,12 +777,17 @@ jFluidic.Fluid = Class.extend({
         }
     },
 
+    isGoing: function() {
+        return !!this._intervalId;
+    },
+
     _autoStep: function () {
         var newTime = Date.now();
         var dt = (newTime - this._previousTime) / 1000.0;
         this._previousTime = newTime;
 
-        this.step(dt * this._options.speedMultiplier);
+        this._fpsCalculator.notifyFrame(dt);
+        this._constantStepSolver.step(dt * this._options.speedMultiplier);
         this.draw();
         
         if (this._fpsCalculator.getTotalFrameCount() % 100 == 50)
@@ -799,13 +795,6 @@ jFluidic.Fluid = Class.extend({
     },
 
     step: function (dt) {
-        this._fpsCalculator.notifyFrame(dt);
-
-        if (this._injectParams) {
-            this._injectParams.vectorField = this._textureManager.ink();
-            this._injectSolveStep.go(this._injectParams, this._textureManager.ink);
-        }
-        this._constantStepSolver.step(dt);
     },
 
     draw: function () {
@@ -815,15 +804,16 @@ jFluidic.Fluid = Class.extend({
     },
 
     inject: function (position, velocity) {
-        this._injectParams = {
+        var injectParams = {
             position: position,
             velocity: velocity,
-            radius: this._options.drawRadius
+            radius: this._options.drawRadius,
+            vectorField: this._textureManager.ink()
         };
-    },
 
-    stopInject: function () {
-        this._injectParams = null;
+        this._injectSolveStep.go(injectParams, this._textureManager.ink);
+        if (!this.isGoing())
+            this.draw();
     },
 
     loadImageAsInk: function (src) {
