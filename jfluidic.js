@@ -111,7 +111,7 @@ jFluidic.SolveStep = Class.extend({
     },
 
     go: function (bindings, destination) {
-        this._renderer.begin();
+        this._renderer.begin(destination);
         this._program.go(bindings);
         this._renderer.end(destination);
     }
@@ -138,36 +138,36 @@ jFluidic.LinearSolver = Class.extend({
 });
 
 jFluidic.ToTextureRenderer = Class.extend({
-    construct: function (gl, textureManager, width, height) {
+    construct: function (gl, textureManager, size) {
         this._gl = gl;
         this._textureManager = textureManager;
 
-        this._framebuffer = this._createFramebuffer(width, height);
+        this._framebuffer = this._createFramebuffer(size);
         // Not sure why I don't need this renderbuffer
         //this._renderbuffer = this._createRenderbuffer(width,  height);
     },
 
-    begin: function () {
+    begin: function (destinationFunction) {
         this._gl.bindFramebuffer(this._gl.FRAMEBUFFER, this._framebuffer);
-        this._gl.framebufferTexture2D(this._gl.FRAMEBUFFER, this._gl.COLOR_ATTACHMENT0, this._gl.TEXTURE_2D, this._textureManager.buffer(), 0);
+        this._gl.framebufferTexture2D(this._gl.FRAMEBUFFER, this._gl.COLOR_ATTACHMENT0, this._gl.TEXTURE_2D, this._textureManager.getBuffer(destinationFunction), 0);
     },
 
-    end: function (destination) {
+    end: function (destinationFunction) {
         this._gl.bindFramebuffer(this._gl.FRAMEBUFFER, null);
-        this._textureManager.swap(destination);
+        this._textureManager.swap(destinationFunction);
     },
 
-    _createFramebuffer: function (width, height) {
+    _createFramebuffer: function (size) {
         var framebuffer = this._gl.createFramebuffer();
-        framebuffer.width = width;
-        framebuffer.height = height;
+        //framebuffer.width = size.x;
+        //framebuffer.height = size.y;
         return framebuffer;
     },
 
-    _createRenderbuffer: function (width, height) {
+    _createRenderbuffer: function (size) {
         var renderbuffer = this._gl.createRenderbuffer();
         this._gl.bindRenderbuffer(this._gl.RENDERBUFFER, renderbuffer);
-        this._gl.renderbufferStorage(this._gl.RENDERBUFFER, this._gl.DEPTH_COMPONENT16, width, height);
+        this._gl.renderbufferStorage(this._gl.RENDERBUFFER, this._gl.DEPTH_COMPONENT16, size.x, size.y);
         this._gl.bindRenderbuffer(this._gl.RENDERBUFFER, null);
         return renderbuffer;
     }
@@ -226,12 +226,12 @@ jFluidic.TextureLoader = Class.extend({
         this._gl = gl;
     },
 
-    createClamped: function (width, height) {
-        return this._create(width, height, true);
+    createClamped: function (size) {
+        return this._create(size, true);
     },
 
-    createWrapped: function (width, height) {
-        return this._create(width, height, false);
+    createWrapped: function (size) {
+        return this._create(size, false);
     },
 
     createFromImage: function (src, callback) {
@@ -240,11 +240,11 @@ jFluidic.TextureLoader = Class.extend({
         return texture;
     },
 
-    _create: function (width, height, clamp) {
+    _create: function (size, clamp) {
         this._checkForGlFloatExtension();
 
         var texture = this._gl.createTexture();
-        this._initializeEmptyDataTexture(texture, width, height, clamp);
+        this._initializeEmptyDataTexture(texture, size, clamp);
         return texture;
     },
 
@@ -265,9 +265,9 @@ jFluidic.TextureLoader = Class.extend({
         }
     },
 
-    _initializeEmptyDataTexture: function (texture, width, height, clamp) {
+    _initializeEmptyDataTexture: function (texture, size, clamp) {
         this._gl.bindTexture(this._gl.TEXTURE_2D, texture);
-        this._gl.texImage2D(this._gl.TEXTURE_2D, 0, this._gl.RGBA, width, height, 0, this._gl.RGBA, this._gl.FLOAT, null);
+        this._gl.texImage2D(this._gl.TEXTURE_2D, 0, this._gl.RGBA, size.x, size.y, 0, this._gl.RGBA, this._gl.FLOAT, null);
         this._setupTextureParameters(clamp);
         this._gl.bindTexture(this._gl.TEXTURE_2D, null);
     },
@@ -298,21 +298,33 @@ jFluidic.TextureLoader = Class.extend({
 });
 
 jFluidic.TextureManager = Class.extend({
-    construct: function (gl, textureLoader, width, height) {
+    construct: function (gl, textureLoader, solveSize, drawSize) {
         this._gl = gl;
-        this._vectorField = textureLoader.createClamped(width, height);
-        this._buffer = textureLoader.createClamped(width, height);
-        this._divergenceField = textureLoader.createClamped(width, height);
-        this._pressure = textureLoader.createClamped(width, height);
-        this._ink = textureLoader.createClamped(width, height);
+        this._textureLoader = textureLoader;
+        this._solveSize = solveSize;
+        this._drawSize = drawSize;
+
+        this._solveBuffer = textureLoader.createClamped(solveSize);
+        this._drawBuffer = textureLoader.createClamped(drawSize);
+
+        this._vectorField = this._createTextureAndBindBuffer(solveSize, this.vectorField,  this.solveBuffer);
+        this._divergenceField = this._createTextureAndBindBuffer(solveSize, this.divergenceField,  this.solveBuffer);
+        this._pressure = this._createTextureAndBindBuffer(solveSize, this.pressure,  this.solveBuffer);
+
+        this._ink = this._createTextureAndBindBuffer(drawSize, this.ink,  this.drawBuffer);
     },
+
+    _createTextureAndBindBuffer: function(size, textureFunction, bufferFunction) {
+        var texture = this._textureLoader.createClamped(size);
+        textureFunction.buffer = bufferFunction;
+        return texture;
+    },
+
+    getSolveSize: function() { return this._solveSize; },
+    getDrawSize: function() { return this._drawSize; },
 
     vectorField: function (value) {
         return this._vectorField = (value === $.undefined ? this._vectorField : value);
-    },
-
-    buffer: function (value) {
-        return this._buffer = (value === $.undefined ? this._buffer : value);
     },
 
     divergenceField: function (value) {
@@ -327,10 +339,24 @@ jFluidic.TextureManager = Class.extend({
         return this._ink = (value === $.undefined ? this._ink : value);
     },
 
-    swap: function (fn) {
-        var tmp = this.buffer();
-        this.buffer(fn.call(this));
-        fn.call(this, tmp);
+    solveBuffer: function (value) {
+        return this._solveBuffer = (value === $.undefined ? this._solveBuffer : value);
+    },
+
+    drawBuffer: function (value) {
+        return this._drawBuffer = (value === $.undefined ? this._drawBuffer : value);
+    },
+
+    getBuffer: function(destinationFunction) {
+        var bufferFunction = destinationFunction.buffer;
+        return bufferFunction.call(this);
+    },
+
+    swap: function (destinationFunction) {
+        var bufferFunction = destinationFunction.buffer;
+        var bufferTexture = bufferFunction.call(this);
+        bufferFunction.call(this, destinationFunction.call(this));
+        destinationFunction.call(this, bufferTexture);
     }
 });
 
@@ -510,7 +536,7 @@ jFluidic.FluidStepRunnerFactory = Class.extend({
         this._solveStepFactory = solveStepFactory;
     },
 
-    create: function (width, height, numJacobiIterations) {
+    create: function (numJacobiIterations) {
         var perturbSolveStep = this._solveStepFactory.create('perturb', []);
         var advectSolveStep = this._solveStepFactory.create('advect', ['bilerp']);
         var jacobiSolveStep = this._solveStepFactory.create('jacobi', ['neighbours'])
@@ -519,16 +545,13 @@ jFluidic.FluidStepRunnerFactory = Class.extend({
         var boundarySolveStep = this._solveStepFactory.create('boundary', []);
         var linearSolver = new jFluidic.LinearSolver(jacobiSolveStep, this._textureManager, numJacobiIterations);
 
-        return new jFluidic.FluidStepRunner(width, height,
-            this._textureManager,
+        return new jFluidic.FluidStepRunner(this._textureManager,
             perturbSolveStep, advectSolveStep, linearSolver, divergenceSolveStep, subtractPressureGradientSolveStep, boundarySolveStep);
     }
 });
 
 jFluidic.FluidStepRunner = Class.extend({
-    construct: function (width, height, textureManager, perturb, advect, linearSolver, divergence, subtractPressureGradient, boundary) {
-        this._width = width;
-        this._height = height;
+    construct: function (textureManager, perturb, advect, linearSolver, divergence, subtractPressureGradient, boundary) {
         this._textureManager = textureManager;
         this._perturb = perturb;
         this._advect = advect;
@@ -536,6 +559,23 @@ jFluidic.FluidStepRunner = Class.extend({
         this._divergence = divergence;
         this._subtractPressureGradient = subtractPressureGradient;
         this._boundary = boundary;
+    },
+
+    step: function (dt) {
+        var solveSize = this._textureManager.getSolveSize();
+        var drawSize = this._textureManager.getDrawSize();
+        var dSolve = [1.0 / solveSize.x, 1.0 / solveSize.y, dt];
+        var dDraw = [1.0 / drawSize.x, 1.0 / drawSize.y, dt];
+
+        this._perturbStep(dSolve);
+        this._advectInkStep(dDraw);
+        this._advectVectorFieldStep(dSolve);
+        this._diffuseVectorFieldStep(dSolve, dt);
+        this._divergenceStep(dSolve);
+        this._projectionStep(dSolve, dt);
+        this._boundaryPressure(dSolve);
+        this._subtractPressureGradientStep(dSolve);
+        this._boundaryVectorFieldStep(dSolve);
     },
 
     _perturbStep: function (d) {
@@ -564,8 +604,8 @@ jFluidic.FluidStepRunner = Class.extend({
     },
 
     _diffuseVectorFieldStep: function (d, dt) {
-        var diffusionCoeffecient = 0.000001;
-        var alpha = dt * diffusionCoeffecient * this._width * this._height;
+        var diffusionCoeffecient = 0.00001;
+        var alpha = dt * diffusionCoeffecient / d[0] / d[1];
         var beta = 1 + 4 * alpha;
         //this._linearSolver.go(this._textureManager.vectorField, this._textureManager.vectorField, this._textureManager.vectorField, d, alpha, beta);
     },
@@ -605,19 +645,6 @@ jFluidic.FluidStepRunner = Class.extend({
         }, this._textureManager.vectorField);
     },
 
-    step: function (dt) {
-        var d = [1.0 / this._width, 1.0 / this._height, dt];
-
-        this._perturbStep(d);
-        this._advectInkStep(d);
-        this._advectVectorFieldStep(d);
-        this._diffuseVectorFieldStep(d, dt);
-        this._divergenceStep(d);
-        this._projectionStep(d, dt);
-        this._boundaryPressure(d);
-        this._subtractPressureGradientStep(d);
-        this._boundaryVectorFieldStep(d);
-    }
 });
 
 jFluidic.ConstantStepSolver = Class.extend({
@@ -696,8 +723,12 @@ jFluidic.Fluid = Class.extend({
 
         if (!options.numIterations) options.numIterations = 20;
         if (!options.drawRadius) options.drawRadius = 0.04;
-        if (!options.width) options.width = gl.viewportWidth || 256;
-        if (!options.height) options.height = gl.viewportHeight || 256;
+        if (!options.solveSize) options.solveSize = {};
+        if (!options.solveSize.x)options.solveSize.x = gl.viewportWidth || 256;
+        if (!options.solveSize.y) options.solveSize.y = gl.viewportHeight || 256;
+        if (!options.drawSize) options.drawSize = {};
+        if (!options.drawSize.x)options.drawSize.x = gl.viewportWidth || 256;
+        if (!options.drawSize.y) options.drawSize.y = gl.viewportHeight || 256;
         if (!options.dt) options.dt = 0.01;
         if (!options.speedMultiplier) options.speedMultiplier = 1;
 
@@ -727,17 +758,18 @@ jFluidic.Fluid = Class.extend({
         var vertexShader = this._createVertexShader();
 
         this._textureLoader = new jFluidic.TextureLoader(this._gl);
-        var textureManager = this._textureManager = new jFluidic.TextureManager(this._gl, this._textureLoader, options.width, options.height);
+        var textureManager = this._textureManager = new jFluidic.TextureManager(this._gl, this._textureLoader, options.solveSize, options.drawSize);
         var glProgramFactory = new jFluidic.GlProgramFactory(gl, vertexShader, sharedParameterBinder);
-        var renderer = new jFluidic.ToTextureRenderer(gl, this._textureManager, options.width, options.height);
+        var solveRenderer = new jFluidic.ToTextureRenderer(gl, this._textureManager, options.solveSize);
+        //var drawRenderer = new jFluidic.ToTextureRenderer(gl, this._textureManager, options.drawSize);
         var programLoader = new jFluidic.ProgramLoader(gl, glProgramFactory, sharedParameterBinder);
-        var solveStepFactory = new jFluidic.SolveStepFactory(gl, renderer, programLoader);
+        var solveStepFactory = new jFluidic.SolveStepFactory(gl, solveRenderer, programLoader);
 
         this._drawProgram = this._drawProgram = programLoader.load('draw');
 
         this._injectSolveStep = solveStepFactory.create('inject');
         var fluidStepRunnerFactory = new jFluidic.FluidStepRunnerFactory(textureManager, solveStepFactory);
-        var stepRunner = fluidStepRunnerFactory.create(options.width, options.height, options.numIterations);
+        var stepRunner = fluidStepRunnerFactory.create(options.numIterations);
         var debugDrawProgram = programLoader.load('debug-draw');
 
         this._constantStepSolver = new jFluidic.ConstantStepSolver(stepRunner, options.dt);
@@ -794,9 +826,6 @@ jFluidic.Fluid = Class.extend({
             document.getElementById('fps').innerHTML = this._fpsCalculator.getRecentFps();
     },
 
-    step: function (dt) {
-    },
-
     draw: function () {
         this._drawProgram.go({
             vectorField: this._textureManager.ink()
@@ -826,4 +855,5 @@ jFluidic.Fluid = Class.extend({
         });
     }
 
+    
 });

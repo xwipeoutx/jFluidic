@@ -239,6 +239,7 @@ $(function() {
             throw message + " was caused by call to: " + funcName;
         };
         gl = WebGLDebugUtils.makeDebugContext(gl, throwOnGLError);
+        return gl;
     };
 
     var createGlContext = function(canvas) {
@@ -258,8 +259,8 @@ $(function() {
     var createFluid = function(canvas) {
         var gl = createGlContext(canvas);
         var fluid = new jFluidic.Fluid(gl, {
-            width: 256, 
-            height: 256
+            solveSize: { x: 128, y: 128},
+            drawSize: { x: 512, y: 512}
         });
         return fluid;
     };
@@ -335,7 +336,7 @@ $(function() {
 </head>
 <body>
 <h1>jFluidic</h1>
-<canvas id="dest" width=256 height=256></canvas>
+<canvas id="dest" width=512 height=512></canvas>
 <br />
 <img class="texture" id="ink" title="Ink" />
 <img class="texture" id="vectorField" title="Vector Field" />
