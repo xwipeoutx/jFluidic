@@ -570,7 +570,7 @@ jFluidic.FluidStepRunner = Class.extend({
         this._perturbStep(dSolve);
         this._advectInkStep(dDraw);
         this._advectVectorFieldStep(dSolve);
-        this._diffuseVectorFieldStep(dSolve, dt);
+        //this._diffuseVectorFieldStep(dSolve, dt);
         this._divergenceStep(dSolve);
         this._projectionStep(dSolve, dt);
         this._boundaryPressure(dSolve);
@@ -605,9 +605,9 @@ jFluidic.FluidStepRunner = Class.extend({
 
     _diffuseVectorFieldStep: function (d, dt) {
         var diffusionCoeffecient = 0.00001;
-        var alpha = dt * diffusionCoeffecient / d[0] / d[1];
+        var alpha = dt * diffusionCoeffecient / d[0] * d[1];
         var beta = 1 + 4 * alpha;
-        //this._linearSolver.go(this._textureManager.vectorField, this._textureManager.vectorField, this._textureManager.vectorField, d, alpha, beta);
+        this._linearSolver.go(this._textureManager.vectorField, this._textureManager.vectorField, this._textureManager.vectorField, d, alpha, beta);
     },
 
     _divergenceStep: function (d) {
@@ -718,39 +718,9 @@ jFluidic.FpsCalculator = Class.extend({
 });
 
 jFluidic.Fluid = Class.extend({
-    _getOptions: function (gl, options) {
-        if (!options) options = {};
-
-        if (!options.numIterations) options.numIterations = 20;
-        if (!options.drawRadius) options.drawRadius = 0.04;
-        if (!options.solveSize) options.solveSize = {};
-        if (!options.solveSize.x)options.solveSize.x = gl.viewportWidth || 256;
-        if (!options.solveSize.y) options.solveSize.y = gl.viewportHeight || 256;
-        if (!options.drawSize) options.drawSize = {};
-        if (!options.drawSize.x)options.drawSize.x = gl.viewportWidth || 256;
-        if (!options.drawSize.y) options.drawSize.y = gl.viewportHeight || 256;
-        if (!options.dt) options.dt = 0.01;
-        if (!options.speedMultiplier) options.speedMultiplier = 1;
-
-        return options;
-    },
-
-    _createVertexShader: function () {
-        var vertexShader = this._gl.createShader(this._gl.VERTEX_SHADER);
-        this._gl.shaderSource(vertexShader, document.getElementById('shader-vs').innerHTML);
-        this._gl.compileShader(vertexShader);
-
-        //TODO: Abstract
-
-        if (!this._gl.getShaderParameter(vertexShader, this._gl.COMPILE_STATUS))
-            throw "Failed to compile vertex shader: " + this._gl.getShaderInfoLog(vertexShader);
-
-        return vertexShader;
-    },
-
     construct: function (gl, options) {
         this._gl = gl;
-        this._options = this._getOptions(gl, options);
+        this._options = this._createOptions(gl, options);
 
         var sharedParameterBinder = new jFluidic.SharedParameterBinder(this._gl);
         sharedParameterBinder.setup();
@@ -793,6 +763,36 @@ jFluidic.Fluid = Class.extend({
         };
 
         setTimeout($.proxy(this.start,  this), 100);
+    },
+
+    _createOptions: function (gl, options) {
+        if (!options) options = {};
+
+        if (!options.numIterations) options.numIterations = 20;
+        if (!options.drawRadius) options.drawRadius = 0.04;
+        if (!options.solveSize) options.solveSize = {};
+        if (!options.solveSize.x)options.solveSize.x = gl.viewportWidth || 256;
+        if (!options.solveSize.y) options.solveSize.y = gl.viewportHeight || 256;
+        if (!options.drawSize) options.drawSize = {};
+        if (!options.drawSize.x)options.drawSize.x = gl.viewportWidth || 256;
+        if (!options.drawSize.y) options.drawSize.y = gl.viewportHeight || 256;
+        if (!options.dt) options.dt = 0.01;
+        if (!options.speedMultiplier) options.speedMultiplier = 1;
+
+        return options;
+    },
+
+    _createVertexShader: function () {
+        var vertexShader = this._gl.createShader(this._gl.VERTEX_SHADER);
+        this._gl.shaderSource(vertexShader, document.getElementById('shader-vs').innerHTML);
+        this._gl.compileShader(vertexShader);
+
+        //TODO: Abstract
+
+        if (!this._gl.getShaderParameter(vertexShader, this._gl.COMPILE_STATUS))
+            throw "Failed to compile vertex shader: " + this._gl.getShaderInfoLog(vertexShader);
+
+        return vertexShader;
     },
 
     setSpeedMultiplier: function(value) { this._options.speedMultiplier = value; },

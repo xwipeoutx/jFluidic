@@ -13,344 +13,368 @@
 
 <script id="inject-fs" type="x-shader/x-fragment">
     precision mediump float;
-    
+
     varying vec2 textureCoord;
-    
+
     uniform vec2 position;
     uniform vec4 velocity;
     uniform sampler2D vectorField;
     uniform float radius;
-    
+
     void main(void) {
-        if (length(position - textureCoord) < radius) {
-            gl_FragColor = velocity;
-        } else {
-            gl_FragColor = texture2D(vectorField, textureCoord);
-        }
+    if (length(position - textureCoord) < radius) {
+    gl_FragColor = velocity;
+    } else {
+    gl_FragColor = texture2D(vectorField, textureCoord);
+    }
     }
 </script>
 
 <script id="neighbours-util" type="x-shader/x-fragment">
-void F4Neighbours2D(sampler2D tex,
-					 vec2 s,
-					 vec2 d,
-					 out vec4 left,
-					 out vec4 right,
-					 out vec4 up,
-					 out vec4 down)
-{
+    void F4Neighbours2D(sampler2D tex,
+    vec2 s,
+    vec2 d,
+    out vec4 left,
+    out vec4 right,
+    out vec4 up,
+    out vec4 down)
+    {
     vec2 dx = vec2(d.x, 0);
     vec2 dy = vec2(0, d.y);
-	
-	down = texture2D(tex, s - dy);
-	up = texture2D(tex, s + dy);
-	left = texture2D(tex, s - dx);
-	right = texture2D(tex, s + dx);
-}
+
+    down = texture2D(tex, s - dy);
+    up = texture2D(tex, s + dy);
+    left = texture2D(tex, s - dx);
+    right = texture2D(tex, s + dx);
+    }
 </script>
 
 <script id="jacobi-fs" type="x-shader/x-fragment">
     precision mediump float;
-    
+
     varying vec2 textureCoord;
     uniform vec3 d;
-    
+
     uniform sampler2D x;
     uniform sampler2D b;
     uniform float alpha;
     uniform float beta;
-    
+
     void main(void) {
-    	vec4 left, right, up, down;
-  
-    	vec4 current = texture2D(x, textureCoord);
-    	F4Neighbours2D(b, textureCoord, d.xy, left, right, up, down);
-    	
-    	gl_FragColor = (current + alpha*(left + right + up + down)) / beta;
-    	//gl_FragColor = left;
+    vec4 left, right, up, down;
+
+    vec4 current = texture2D(x, textureCoord);
+    F4Neighbours2D(b, textureCoord, d.xy, left, right, up, down);
+
+    gl_FragColor = (current + alpha*(left + right + up + down)) / beta;
+    //gl_FragColor = left;
     }
 </script>
 
 <script id="divergence-fs" type="xshader/x-fragment">
     precision mediump float;
-    
+
     varying vec2 textureCoord;
     uniform vec3 d;
     uniform sampler2D vectorField;
-    
+
     void main() {
-    	vec4 left, right, up, down;
-    	F4Neighbours2D(vectorField, textureCoord, d.xy, left, right, up, down);
-    	float result  = -0.5*((right.x - left.x) + (up.y - down.y));
-    	gl_FragColor = vec4(result,0,0,0); // FIXME: Make 1-D
+    vec4 left, right, up, down;
+    F4Neighbours2D(vectorField, textureCoord, d.xy, left, right, up, down);
+    float result = -0.5*((right.x - left.x) + (up.y - down.y));
+    gl_FragColor = vec4(result,0,0,0); // FIXME: Make 1-D
     }
 </script>
 
 <script id="subtract-pressure-gradient-fs" type="xshader/x-fragment">
-    precision mediump float;    
+    precision mediump float;
 
     varying vec2 textureCoord;
     uniform vec3 d;
     uniform sampler2D vectorField;
     uniform sampler2D pressure;
-    
+
     void main(void) {
-    	vec4 left, right, up, down;    	
-      	F4Neighbours2D(pressure, textureCoord, d.xy, left, right, up, down);
-    
-    	vec4 result = texture2D(vectorField, textureCoord);
-    	result.x -= 0.5 * (right.x - left.x);
-    	result.y -= 0.5 * (up.x - down.x);
-    	gl_FragColor = vec4(result.xy, 0, 1); // FIXME: Make 1-D
-	}
+    vec4 left, right, up, down;
+    F4Neighbours2D(pressure, textureCoord, d.xy, left, right, up, down);
+
+    vec4 result = texture2D(vectorField, textureCoord);
+    result.x -= 0.5 * (right.x - left.x);
+    result.y -= 0.5 * (up.x - down.x);
+    gl_FragColor = vec4(result.xy, 0, 1); // FIXME: Make 1-D
+    }
 </script>
 
 <script id="bilerp-util" type="x-shader/x-fragment">
-vec4 bilerp(sampler2D tex, vec2 s, vec2 d) {
-      vec4 st;
-      
-      s = s / d.xy;
-      st.xy = (floor(s - 0.5) + 0.5);
-      st.zw = st.xy + 1.0;
-      vec2 t = s - st.xy;
-      st = st * d.xyxy;
-                
-      vec4 tex11 = texture2D(tex, st.xy);
-      vec4 tex21 = texture2D(tex, st.zy);
-      vec4 tex12 = texture2D(tex, st.xw);
-      vec4 tex22 = texture2D(tex, st.zw);
-      
-      // bilinear interpolation
-      return mix(mix(tex11, tex21, t.x), mix(tex12, tex22, t.x), t.y);
-}
+    vec4 bilerp(sampler2D tex, vec2 s, vec2 d) {
+    vec4 st;
+
+    s = s / d.xy;
+    st.xy = (floor(s - 0.5) + 0.5);
+    st.zw = st.xy + 1.0;
+    vec2 t = s - st.xy;
+    st = st * d.xyxy;
+
+    vec4 tex11 = texture2D(tex, st.xy);
+    vec4 tex21 = texture2D(tex, st.zy);
+    vec4 tex12 = texture2D(tex, st.xw);
+    vec4 tex22 = texture2D(tex, st.zw);
+
+    // bilinear interpolation
+    return mix(mix(tex11, tex21, t.x), mix(tex12, tex22, t.x), t.y);
+    }
 </script>
 
 <script id="advect-fs" type="x-shader/x-fragment">
     precision mediump float;
-    
+
     varying vec2 textureCoord;
-    
+
     uniform sampler2D affectedField;
     uniform sampler2D vectorField;
     uniform vec3 d;
-    
+
     void main(void) {
-        float speed = 30.0;
-        vec4 velocity = texture2D(vectorField, textureCoord);
-        vec2 lastPosition = textureCoord - velocity.xy * d.z * speed * d.xy;
-        
-        gl_FragColor = bilerp(affectedField, lastPosition, d.xy);
+    float speed = 30.0;
+    vec4 velocity = texture2D(vectorField, textureCoord);
+    vec2 lastPosition = textureCoord - velocity.xy * d.z * speed * d.xy;
+
+    gl_FragColor = bilerp(affectedField, lastPosition, d.xy);
     }
 </script>
 
 <script id="perturb-fs" type="x-shader/x-fragment">
     precision mediump float;
-    
+
     varying vec2 textureCoord;
-    
+
     uniform sampler2D affectedField;
     uniform sampler2D vectorField;
     uniform vec3 d;
-    
+
     void main(void) {
-        
-        vec4 velocity = texture2D(vectorField, textureCoord);
-        vec4 color =  texture2D(affectedField, textureCoord);
-        
-        velocity.y = velocity.y + 3.0*(color.r - color.b) * d.z;
-        velocity.a = velocity.y;
-        
-        gl_FragColor = velocity;
+
+    vec4 velocity = texture2D(vectorField, textureCoord);
+    vec4 color = texture2D(affectedField, textureCoord);
+
+    velocity.y = velocity.y + 3.0*(color.r - color.b) * d.z;
+    velocity.a = velocity.y;
+
+    gl_FragColor = velocity;
     }
 </script>
 
 <script id="boundary-fs" type="x-shader/x-fragment">
 
     precision mediump float;
-    
+
     varying vec2 textureCoord;
-    
+
     uniform sampler2D field;
     uniform vec3 d;
     uniform float multiple;
-    
+
     void main(void) {
-        vec4 result = texture2D(field, textureCoord);
-        if (textureCoord.x <= d.x) result.x = multiple * result.x;
-        if (textureCoord.x >= 1.0-d.x) result.x = multiple * result.x;
-        if (textureCoord.y <= d.x) result.y = multiple * result.y;
-        if (textureCoord.y >= 1.0-d.x) result.y = multiple * result.y;
-        
-        gl_FragColor = result;
+    vec4 result = texture2D(field, textureCoord);
+    if (textureCoord.x <= d.x) result.x = multiple * result.x;
+    if (textureCoord.x >= 1.0-d.x) result.x = multiple * result.x;
+    if (textureCoord.y <= d.x) result.y = multiple * result.y;
+    if (textureCoord.y >= 1.0-d.x) result.y = multiple * result.y;
+
+    gl_FragColor = result;
     }
 </script>
 
 <script id="draw-fs" type="x-shader/x-fragment">
     precision mediump float;
-    
+
     varying vec4 vColor;
     varying vec2 textureCoord;
-    
+
     uniform sampler2D vectorField;
-    
+
     void main(void) {
-        gl_FragColor = vec4(1,0,1,1);
-        gl_FragColor = texture2D(vectorField, textureCoord);
-        gl_FragColor = abs(gl_FragColor);
+    gl_FragColor = vec4(1,0,1,1);
+    gl_FragColor = texture2D(vectorField, textureCoord);
+    gl_FragColor = abs(gl_FragColor);
     }
 </script>
 <script id="debug-draw-fs" type="x-shader/x-fragment">
     precision mediump float;
-    
+
     varying vec4 vColor;
     varying vec2 textureCoord;
-    
+
     uniform sampler2D vectorField;
-    
+
     void main(void) {
-        //gl_FragColor = vec4(1,0,1,1);
-        gl_FragColor = texture2D(vectorField, textureCoord);
-        gl_FragColor.a = 1.;
-        gl_FragColor = abs(gl_FragColor);
+    //gl_FragColor = vec4(1,0,1,1);
+    gl_FragColor = texture2D(vectorField, textureCoord);
+    gl_FragColor.a = 1.;
+    gl_FragColor = abs(gl_FragColor);
     }
 </script>
 <script id="shader-vs" type="x-shader/x-vertex">
     attribute vec3 vertices;
     attribute vec2 textureCoords;
-    
+
     uniform mat4 modelViewMatrix;
     uniform mat4 projectionMatrix;
 
     varying vec2 textureCoord;
 
     void main(void) {
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(vertices, 1.0);
-        textureCoord = textureCoords;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(vertices, 1.0);
+    textureCoord = textureCoords;
     }
 </script>
 
 <script>
 
-$(function() {
-    var makeDebug = function(gl) {
-        var throwOnGLError = function(err, funcName, args) {
-            var message = WebGLDebugUtils.glEnumToString(err);
-            debugger;
-            throw message + " was caused by call to: " + funcName;
+    $(function() {
+        var makeDebug = function(gl) {
+            var throwOnGLError = function(err, funcName, args) {
+                var message = WebGLDebugUtils.glEnumToString(err);
+                debugger;
+                throw message + " was caused by call to: " + funcName;
+            };
+            gl = WebGLDebugUtils.makeDebugContext(gl, throwOnGLError);
+            return gl;
         };
-        gl = WebGLDebugUtils.makeDebugContext(gl, throwOnGLError);
-        return gl;
-    };
 
-    var createGlContext = function(canvas) {
-        var gl;
-        try {
-            gl = canvas.getContext('experimental-webgl');
-            //gl = makeDebug(gl);
-            gl.viewportWidth = canvas.width;
-            gl.viewportHeight = canvas.height;
-        } catch(e) {}
-        
-        if (!gl) alert("Could not create gl context - try and use a real browser (that is, Chrome)");
-        
-        return gl;
-    };
-    
-    var createFluid = function(canvas) {
-        var gl = createGlContext(canvas);
-        var fluid = new jFluidic.Fluid(gl, {
-            solveSize: { x: 128, y: 128},
-            drawSize: { x: 512, y: 512}
-        });
-        return fluid;
-    };
-    
-    var canvas = document.getElementById('dest');
-    var fluid = createFluid(canvas);
-    var interactor = new jFluidic.Interactor($(canvas), fluid);
-    
-    if (false) {
-        $(canvas).clone().attr('id', 'dest1').insertAfter(canvas);
-        $(canvas).clone().attr('id', 'dest2').insertAfter(canvas);
-        $(canvas).clone().attr('id', 'dest3').insertAfter(canvas);
-        
-        var fluid1 = createFluid(document.getElementById('dest1'));
-        var fluid2 = createFluid(document.getElementById('dest2'));
-        var fluid3 = createFluid(document.getElementById('dest3'));
-        var interactor1 = new jFluidic.Interactor($(canvas), fluid1);
-        var interactor2 = new jFluidic.Interactor($(canvas), fluid2);
-        var interactor3 = new jFluidic.Interactor($(canvas), fluid3);
-        fluid.oldLoadImageAsInk = fluid.loadImageAsInk;
-        fluid.loadImageAsInk = function(result) {
-            fluid.oldLoadImageAsInk(result);
-            fluid1.loadImageAsInk(result);
-            fluid2.loadImageAsInk(result);
-            fluid3.loadImageAsInk(result);
+        var createGlContext = function(canvas) {
+            var gl;
+            try {
+                gl = canvas.getContext('experimental-webgl');
+                //gl = makeDebug(gl);
+                gl.viewportWidth = canvas.width;
+                gl.viewportHeight = canvas.height;
+            } catch (e) {}
+
+            if (!gl) alert("Could not create gl context - try and use a real browser (that is, Chrome)");
+
+            return gl;
         };
-    }
-    
-    $(canvas).bind({
-        dragover: function() {
-            return false; // allows drop
-        },
-        
-        drop: function(event) {
-            var dataTransfer = event.originalEvent.dataTransfer;
-            var html = event.originalEvent.dataTransfer.getData('text/html');
-            if (!html) return false;
-            var src = $(html).attr('src');
-            
-            // Dodgy cross-site fix
-            $.get('mirror.php', { src: src }, function(result) {
-                fluid.loadImageAsInk(result);
+
+        var createFluid = function(canvas) {
+            var gl = createGlContext(canvas);
+            var fluid = new jFluidic.Fluid(gl, {
+                solveSize: { x: 256, y: 256},
+                drawSize: { x: 256, y: 256}
             });
-            
-            return false;
+            return fluid;
+        };
+
+        var canvas = document.getElementById('dest');
+        var fluid = createFluid(canvas);
+        var interactor = new jFluidic.Interactor($(canvas), fluid);
+
+        var showExtraFluids = false;
+        if (showExtraFluids) {
+            $(canvas).clone().attr('id', 'dest1').insertAfter(canvas);
+            $(canvas).clone().attr('id', 'dest2').insertAfter(canvas);
+            $(canvas).clone().attr('id', 'dest3').insertAfter(canvas);
+
+            var fluid1 = createFluid(document.getElementById('dest1'));
+            var fluid2 = createFluid(document.getElementById('dest2'));
+            var fluid3 = createFluid(document.getElementById('dest3'));
+            var interactor1 = new jFluidic.Interactor($(canvas), fluid1);
+            var interactor2 = new jFluidic.Interactor($(canvas), fluid2);
+            var interactor3 = new jFluidic.Interactor($(canvas), fluid3);
+            fluid.oldLoadImageAsInk = fluid.loadImageAsInk;
+            fluid.loadImageAsInk = function(result) {
+                fluid.oldLoadImageAsInk(result);
+                fluid1.loadImageAsInk(result);
+                fluid2.loadImageAsInk(result);
+                fluid3.loadImageAsInk(result);
+            };
         }
+
+        (function() {
+            var x = 0.5, y = 0.5, delta = 0.03;
+            var r = 0.5, g = 0.5, b = 0.5;
+
+            setInterval(function() {
+                fluid.inject([x, y], [r, g , b, 1]);
+                x = nudge(x);
+                y = nudge(y);
+                r = nudge(r);
+                g = nudge(g);
+                b = nudge(b);
+            }, 10);
+
+            function nudge(val) {
+                val = val + delta - Math.random() * 2 * delta;
+                while (val > 1) val = 1;
+                while (val < 0) val = 0;
+                return val;
+            }
+        })();
+        $(canvas).bind({
+            dragover: function() {
+                return false; // allows drop
+            },
+
+            drop: function(event) {
+                var dataTransfer = event.originalEvent.dataTransfer;
+                var html = event.originalEvent.dataTransfer.getData('text/html');
+                if (!html) return false;
+                var src = $(html).attr('src');
+
+                // Dodgy cross-site fix
+                $.get('mirror.php', { src: src }, function(result) {
+                    fluid.loadImageAsInk(result);
+                });
+
+                return false;
+            }
+        });
+
+        $("#go").change(function() {
+            if ($(this).is(":checked"))
+                fluid.start();
+            else
+                fluid.stop();
+        });
+
+        $('#speedup').change(function() {
+            fluid.setSpeedMultiplier($(this).val());
+        });
     });
-    
-    $("#go").change(function() {
-        if ($(this).is(":checked"))
-            fluid.start();
-        else
-            fluid.stop();
-    });
-        
-    $('#speedup').change(function() {
-        fluid.setSpeedMultiplier($(this).val());
-    });
-});
 
 </script>
 <style>
-    canvas { 
+    canvas {
         border: 1px solid white;
     }
+
     body {
         background: #888;
     }
+
     img.texture {
-        width: 256px; height: 256px;
+        width: 256px;
+        height: 256px;
     }
 </style>
 </head>
 <body>
 <h1>jFluidic</h1>
 <canvas id="dest" width=512 height=512></canvas>
-<br />
-<img class="texture" id="ink" title="Ink" />
-<img class="texture" id="vectorField" title="Vector Field" />
-<img class="texture" id="pressure" title="Pressure" />
-<img class="texture" id="divergenceField" title="Divergence" />
+<br/>
+<img class="texture" id="ink" title="Ink"/>
+<img class="texture" id="vectorField" title="Vector Field"/>
+<img class="texture" id="pressure" title="Pressure"/>
+<img class="texture" id="divergenceField" title="Divergence"/>
 
-<br />
-FPS: <span id="fps"></span><br />
-Speedup: <input type="number" id="speedup" value="1" />
-<br /><label><input type="checkbox" checked="checked" id="go" /> Go</label>
-<br /><label><input type="checkbox" achecked="checked" id="debug-ink" /> Debug Ink</label>
-<br /><label><input type="checkbox" achecked="checked" id="debug-vectorField" /> Debug Field</label>
-<br /><label><input type="checkbox" achecked="checked" id="debug-pressure" /> Debug Pressure</label>
-<br /><label><input type="checkbox" achecked="checked" id="debug-divergenceField" /> Debug Div</label>
+<br/>
+FPS: <span id="fps"></span><br/>
+Speedup: <input type="number" id="speedup" value="1"/>
+<br/><label><input type="checkbox" checked="checked" id="go"/> Go</label>
+<br/><label><input type="checkbox" achecked="checked" id="debug-ink"/> Debug Ink</label>
+<br/><label><input type="checkbox" achecked="checked" id="debug-vectorField"/> Debug Field</label>
+<br/><label><input type="checkbox" achecked="checked" id="debug-pressure"/> Debug Pressure</label>
+<br/><label><input type="checkbox" achecked="checked" id="debug-divergenceField"/> Debug Div</label>
 
 </body>
 </html>
