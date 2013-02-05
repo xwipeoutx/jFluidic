@@ -732,11 +732,11 @@ jFluidic.Fluid = Class.extend({
         var textureManager = this._textureManager = new jFluidic.TextureManager(this._gl, this._textureLoader, options.solveSize, options.drawSize);
         var glProgramFactory = new jFluidic.GlProgramFactory(gl, vertexShader, sharedParameterBinder);
         var solveRenderer = new jFluidic.ToTextureRenderer(gl, this._textureManager, options.solveSize);
-        //var drawRenderer = new jFluidic.ToTextureRenderer(gl, this._textureManager, options.drawSize);
         var programLoader = new jFluidic.ProgramLoader(gl, glProgramFactory, sharedParameterBinder);
         var solveStepFactory = new jFluidic.SolveStepFactory(gl, solveRenderer, programLoader);
 
         this._drawProgram = this._drawProgram = programLoader.load('draw');
+        this._drawSolveStep = solveStepFactory.create('draw');
 
         this._injectSolveStep = solveStepFactory.create('inject');
         var fluidStepRunnerFactory = new jFluidic.FluidStepRunnerFactory(textureManager, solveStepFactory);
@@ -746,6 +746,7 @@ jFluidic.Fluid = Class.extend({
         this._constantStepSolver = new jFluidic.ConstantStepSolver(stepRunner, options.dt);
         this._fpsCalculator = new jFluidic.FpsCalculator();
 
+        // FIXME: Debugging should not be here
         var debugTexture = function (textureName) {
             if (!$('#debug-' + textureName).is(":checked")) return;
 
@@ -847,13 +848,15 @@ jFluidic.Fluid = Class.extend({
     },
 
     loadImageAsInk: function (src) {
-        var self = this;
+        this._textureLoader.createFromImage(src, drawTextureToInk.bind(this));
 
-        this._textureLoader.createFromImage(src, function (texture) {
-            self._textureRenderer.go(self._drawProgram, {
-                vectorField: texture
-            }, self._textureManager.ink);
-        });
+        function drawTextureToInk(texture) {
+            var bindings = { vectorField: texture };
+            this._drawSolveStep.go(bindings, this._textureManager.ink);
+            if (!this.isGoing())
+                this.draw();
+        }
+
     }
 
     
