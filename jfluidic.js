@@ -508,7 +508,7 @@ jFluidic.Interactor = Class.extend({
     },
 
     _isAnyButtonPressed: function () {
-        return this._buttons[1] || this._buttons[3];
+        return this._buttons[1] || this._buttons[2] || this._buttons[3];
     },
 
     _performInject: function (x, y) {
@@ -525,8 +525,9 @@ jFluidic.Interactor = Class.extend({
 
     _getColorVector: function () {
         var red = this._buttons[1] ? 1 : 0;
+        var green = this._buttons[2] ? 1 : 0;
         var blue = this._buttons[3] ? 1 : 0;
-        return  [red, 0, blue, 1];
+        return  [red, green, blue, 1];
     }
 });
 
