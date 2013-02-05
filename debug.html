@@ -2,10 +2,11 @@
 <html>
 
 <head>
-<title>jFluidic Demo</title>
+<title>jFluidic</title>
 <meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
 
 <script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
+<script type="text/javascript" src="webgl-debug.js"></script>
 <script type="text/javascript" src="class.js"></script>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="jfluidic.js"></script>
@@ -198,7 +199,6 @@
     gl_FragColor = abs(gl_FragColor);
     }
 </script>
-
 <script id="debug-draw-fs" type="x-shader/x-fragment">
     precision mediump float;
 
@@ -214,7 +214,6 @@
     gl_FragColor = abs(gl_FragColor);
     }
 </script>
-
 <script id="shader-vs" type="x-shader/x-vertex">
     attribute vec3 vertices;
     attribute vec2 textureCoords;
@@ -233,10 +232,21 @@
 <script>
 
     $(function() {
+        var makeDebug = function(gl) {
+            var throwOnGLError = function(err, funcName, args) {
+                var message = WebGLDebugUtils.glEnumToString(err);
+                debugger;
+                throw message + " was caused by call to: " + funcName;
+            };
+            gl = WebGLDebugUtils.makeDebugContext(gl, throwOnGLError);
+            return gl;
+        };
+
         var createGlContext = function(canvas) {
             var gl;
             try {
                 gl = canvas.getContext('experimental-webgl');
+                //gl = makeDebug(gl);
                 gl.viewportWidth = canvas.width;
                 gl.viewportHeight = canvas.height;
             } catch (e) {}
@@ -255,10 +265,51 @@
             return fluid;
         };
 
-        var canvas = document.getElementById('fluid');
+        var canvas = document.getElementById('dest');
         var fluid = createFluid(canvas);
         var interactor = new jFluidic.Interactor($(canvas), fluid);
 
+        var showExtraFluids = false;
+        if (showExtraFluids) {
+            $(canvas).clone().attr('id', 'dest1').insertAfter(canvas);
+            $(canvas).clone().attr('id', 'dest2').insertAfter(canvas);
+            $(canvas).clone().attr('id', 'dest3').insertAfter(canvas);
+
+            var fluid1 = createFluid(document.getElementById('dest1'));
+            var fluid2 = createFluid(document.getElementById('dest2'));
+            var fluid3 = createFluid(document.getElementById('dest3'));
+            var interactor1 = new jFluidic.Interactor($(canvas), fluid1);
+            var interactor2 = new jFluidic.Interactor($(canvas), fluid2);
+            var interactor3 = new jFluidic.Interactor($(canvas), fluid3);
+            fluid.oldLoadImageAsInk = fluid.loadImageAsInk;
+            fluid.loadImageAsInk = function(result) {
+                fluid.oldLoadImageAsInk(result);
+                fluid1.loadImageAsInk(result);
+                fluid2.loadImageAsInk(result);
+                fluid3.loadImageAsInk(result);
+            };
+        }
+
+        (function() {
+            var x = 0.5, y = 0.5, delta = 0.03;
+            var r = 0.5, g = 0.5, b = 0.5;
+
+            setInterval(function() {
+                fluid.inject([x, y], [r, g , b, 1]);
+                x = nudge(x);
+                y = nudge(y);
+                r = nudge(r);
+                g = nudge(g);
+                b = nudge(b);
+            }, 10);
+
+            function nudge(val) {
+                val = val + delta - Math.random() * 2 * delta;
+                while (val > 1) val = 1;
+                while (val < 0) val = 0;
+                return val;
+            }
+        })();
         $(canvas).bind({
             dragover: function() {
                 return false; // allows drop
@@ -270,7 +321,7 @@
                 if (!html) return false;
                 var src = $(html).attr('src');
 
-                // Dodgy cross-site-scripting fix
+                // Dodgy cross-site fix
                 $.get('mirror.php', { src: src }, function(result) {
                     fluid.loadImageAsInk(result);
                 });
@@ -294,51 +345,36 @@
 </script>
 <style>
     canvas {
-        border: 1px solid #C3C3C3;
-        background: black;
+        border: 1px solid white;
     }
 
     body {
         background: #888;
     }
 
-    #fluid {
-        display: inline-block;
-    }
-
-    #instructions {
-        display: inline-block;
-        vertical-align: top;
-        margin-left: 16px;
-        width: 200px;
-    }
-    h2 {
-        margin-top: 0;
+    img.texture {
+        width: 256px;
+        height: 256px;
     }
 </style>
 </head>
 <body>
-<h1>jFluidic Demo Page</h1>
-<canvas id="fluid" width=512 height=512></canvas>
-<div id="instructions">
-    <h2>Instructions</h2>
-    <p>
-        Use the mouse to inject fluid in the container.  Each mouse button injects a different colour.
-        Red is low density, blue is high density and green is normal density.
-    </p>
-    <p>
-        Use the controls at the bottom of the page to speed up or slow down the simulation - non-integer multiples
-        are valid.
-    </p>
-    <p>
-        Drag/drop from a web-hosted image (such as from <a href="http://placekitten.com">Place Kitten</a>) to see it
-        distort via fluid dynamics.
-    </p>
-</div>
+<h1>jFluidic</h1>
+<canvas id="dest" width=512 height=512></canvas>
+<br/>
+<img class="texture" id="ink" title="Ink"/>
+<img class="texture" id="vectorField" title="Vector Field"/>
+<img class="texture" id="pressure" title="Pressure"/>
+<img class="texture" id="divergenceField" title="Divergence"/>
+
 <br/>
 FPS: <span id="fps"></span><br/>
 Speedup: <input type="number" id="speedup" value="1"/>
 <br/><label><input type="checkbox" checked="checked" id="go"/> Go</label>
+<br/><label><input type="checkbox" achecked="checked" id="debug-ink"/> Debug Ink</label>
+<br/><label><input type="checkbox" achecked="checked" id="debug-vectorField"/> Debug Field</label>
+<br/><label><input type="checkbox" achecked="checked" id="debug-pressure"/> Debug Pressure</label>
+<br/><label><input type="checkbox" achecked="checked" id="debug-divergenceField"/> Debug Div</label>
 
 </body>
 </html>
