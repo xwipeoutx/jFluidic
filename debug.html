@@ -259,8 +259,8 @@
         var createFluid = function(canvas) {
             var gl = createGlContext(canvas);
             var fluid = new jFluidic.Fluid(gl, {
-                solveSize: { x: 256, y: 256},
-                drawSize: { x: 256, y: 256}
+                solveSize: { x: 512, y: 512},
+                drawSize: { x: 512, y: 512}
             });
             return fluid;
         };
@@ -310,6 +310,7 @@
                 return val;
             }
         })();
+
         $(canvas).bind({
             dragover: function() {
                 return false; // allows drop

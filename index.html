@@ -208,8 +208,8 @@
     uniform sampler2D vectorField;
 
     void main(void) {
-    //gl_FragColor = vec4(1,0,1,1);
-    gl_FragColor = texture2D(vectorField, textureCoord);
+    gl_FragColor = vec4(1,0,1,1);
+    //gl_FragColor = texture2D(vectorField, textureCoord);
     gl_FragColor.a = 1.;
     gl_FragColor = abs(gl_FragColor);
     }
@@ -249,8 +249,8 @@
         var createFluid = function(canvas) {
             var gl = createGlContext(canvas);
             var fluid = new jFluidic.Fluid(gl, {
-                solveSize: { x: 256, y: 256},
-                drawSize: { x: 256, y: 256}
+                solveSize: { x: 512, y: 512},
+                drawSize: { x: 512, y: 512}
             });
             return fluid;
         };
